@@ -1,0 +1,31 @@
+name: CI Model
+
+on:
+  push:
+    paths:
+      - 'services/model/**'
+      - '.github/workflows/ci-model.yml'
+  pull_request:
+    paths:
+      - 'services/model/**'
+      - '.github/workflows/ci-model.yml'
+
+jobs:
+  model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r services/model/requirements.txt
+
+      - name: Pytest
+        run: pytest services/model/tests
+
+      - name: Build smoke check
+        run: python -m compileall services/model/app

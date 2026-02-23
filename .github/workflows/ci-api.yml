@@ -1,0 +1,68 @@
+name: CI API
+
+on:
+  push:
+    paths:
+      - 'services/api/**'
+      - 'packages/shared/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - '.github/workflows/ci-api.yml'
+  pull_request:
+    paths:
+      - 'services/api/**'
+      - 'packages/shared/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - '.github/workflows/ci-api.yml'
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: reliscore
+          POSTGRES_PASSWORD: reliscore
+          POSTGRES_DB: reliscore
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U reliscore -d reliscore"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared package
+        run: pnpm --filter @reliscore/shared build
+
+      - name: Generate Prisma client
+        run: pnpm --filter @reliscore/api prisma:generate
+        env:
+          DATABASE_URL: postgresql://reliscore:reliscore@localhost:5432/reliscore
+
+      - name: Lint API
+        run: pnpm --filter @reliscore/api lint
+
+      - name: Test API
+        run: pnpm --filter @reliscore/api test
+
+      - name: Build API
+        run: pnpm --filter @reliscore/api build

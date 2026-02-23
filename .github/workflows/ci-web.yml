@@ -1,0 +1,48 @@
+name: CI Web
+
+on:
+  push:
+    paths:
+      - 'apps/web/**'
+      - 'packages/shared/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - '.github/workflows/ci-web.yml'
+  pull_request:
+    paths:
+      - 'apps/web/**'
+      - 'packages/shared/**'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
+      - '.github/workflows/ci-web.yml'
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build shared package
+        run: pnpm --filter @reliscore/shared build
+
+      - name: Lint web
+        run: pnpm --filter @reliscore/web lint
+
+      - name: Test web
+        run: pnpm --filter @reliscore/web test
+
+      - name: Build web
+        run: pnpm --filter @reliscore/web build
