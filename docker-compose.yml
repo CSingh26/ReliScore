@@ -19,5 +19,69 @@ services:
       timeout: 5s
       retries: 20
 
+  model:
+    build:
+      context: .
+      dockerfile: services/model/Dockerfile
+    container_name: reliscore-model
+    restart: unless-stopped
+    environment:
+      MODEL_ARTIFACTS_ROOT: /app/artifacts
+      MODEL_VERSION: latest
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    container_name: reliscore-api
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://reliscore:reliscore@postgres:5432/reliscore
+      API_PORT: 4000
+      MODEL_SERVICE_URL: http://model:8000
+      MODEL_SERVICE_TOKEN: local-dev-token
+      MODEL_VERSION: latest
+    ports:
+      - "4000:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      model:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/api/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: reliscore-web
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: /backend
+      API_INTERNAL_URL: http://api:4000/api/v1
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   reliscore_pgdata:
