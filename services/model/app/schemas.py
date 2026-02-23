@@ -3,7 +3,11 @@ from __future__ import annotations
 from datetime import date, datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class SchemaModel(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
 
 
 class RiskBucket(str, Enum):
@@ -12,19 +16,19 @@ class RiskBucket(str, Enum):
     HIGH = "HIGH"
 
 
-class ScoreRequest(BaseModel):
+class ScoreRequest(SchemaModel):
     drive_id: str
     day: date
     features: dict[str, float | None]
 
 
-class ReasonCode(BaseModel):
+class ReasonCode(SchemaModel):
     code: str
     contribution: float
     direction: str
 
 
-class ScoreResponse(BaseModel):
+class ScoreResponse(SchemaModel):
     drive_id: str
     day: date
     risk_score: float = Field(ge=0.0, le=1.0)
@@ -34,17 +38,17 @@ class ScoreResponse(BaseModel):
     scored_at: datetime
 
 
-class BatchScoreRequest(BaseModel):
+class BatchScoreRequest(SchemaModel):
     items: list[ScoreRequest]
 
 
-class HealthResponse(BaseModel):
+class HealthResponse(SchemaModel):
     status: str
     model_loaded: bool
     model_version: str
 
 
-class ModelInfoResponse(BaseModel):
+class ModelInfoResponse(SchemaModel):
     model_version: str
     model_type: str
     horizon_days: int
