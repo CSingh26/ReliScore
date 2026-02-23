@@ -1,7 +1,10 @@
 import { BadRequestException } from '@nestjs/common';
-import { ZodSchema } from 'zod';
+import { z } from 'zod';
 
-export function parseWithSchema<T>(schema: ZodSchema<T>, value: unknown): T {
+export function parseWithSchema<TSchema extends z.ZodTypeAny>(
+  schema: TSchema,
+  value: unknown,
+): z.infer<TSchema> {
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
     throw new BadRequestException({

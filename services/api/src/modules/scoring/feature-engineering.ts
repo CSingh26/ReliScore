@@ -1,6 +1,6 @@
 import { FeaturesDaily, Prisma, PrismaClient, TelemetryDaily } from '@prisma/client';
 
-export interface FeatureVector {
+export interface FeatureVector extends Record<string, number> {
   age_days: number;
   smart_5_mean_7d: number;
   smart_5_slope_14d: number;
@@ -112,7 +112,7 @@ function toFeaturesDailyCreateInput(
     readLatencyMean7d: vector.read_latency_mean_7d,
     writeLatencyMean7d: vector.write_latency_mean_7d,
     missingSmart19730d: vector.missing_smart_197_30d > 0,
-    featureVector: vector,
+    featureVector: vector as Prisma.InputJsonValue,
   };
 }
 
@@ -130,7 +130,7 @@ function toFeaturesDailyUpdateInput(vector: FeatureVector): Prisma.FeaturesDaily
     readLatencyMean7d: vector.read_latency_mean_7d,
     writeLatencyMean7d: vector.write_latency_mean_7d,
     missingSmart19730d: vector.missing_smart_197_30d > 0,
-    featureVector: vector,
+    featureVector: vector as Prisma.InputJsonValue,
   };
 }
 
