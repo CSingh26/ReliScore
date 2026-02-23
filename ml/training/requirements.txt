@@ -5,3 +5,4 @@ joblib==1.4.2
 matplotlib==3.10.0
 requests==2.32.3
 pyyaml==6.0.2
+beautifulsoup4==4.12.3
