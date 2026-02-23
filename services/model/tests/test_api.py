@@ -7,19 +7,11 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 
 
-FEATURES = {
-    "age_days": 112.0,
-    "smart_5_mean_7d": 7.0,
-    "smart_5_slope_14d": 0.2,
-    "smart_197_max_30d": 12.0,
-    "smart_197_mean_7d": 5.0,
-    "smart_198_delta_7d": 1.0,
-    "smart_199_volatility_30d": 2.0,
-    "temperature_mean_7d": 36.0,
-    "read_latency_mean_7d": 5.5,
-    "write_latency_mean_7d": 7.1,
-    "missing_smart_197_30d": 0.0,
-}
+def _features_from_model_info(client: TestClient) -> dict[str, float]:
+    response = client.get("/model/info")
+    response.raise_for_status()
+    feature_names = response.json()["features"]
+    return {name: 0.0 for name in feature_names}
 
 
 def test_health_endpoint() -> None:
@@ -33,6 +25,7 @@ def test_health_endpoint() -> None:
 
 def test_score_batch_endpoint() -> None:
     client = TestClient(create_app())
+    features = _features_from_model_info(client)
     response = client.post(
         "/score_batch",
         json={
@@ -40,7 +33,7 @@ def test_score_batch_endpoint() -> None:
                 {
                     "drive_id": "drive-1",
                     "day": str(date(2026, 2, 20)),
-                    "features": FEATURES,
+                    "features": features,
                 }
             ]
         },
@@ -59,3 +52,26 @@ def test_model_info_endpoint() -> None:
 
     assert response.status_code == 200
     assert response.json()["model_version"]
+
+
+def test_score_batch_rejects_schema_mismatch() -> None:
+    client = TestClient(create_app())
+    features = _features_from_model_info(client)
+    features.pop(next(iter(features)))
+    features["unexpected_feature"] = 1.0
+
+    response = client.post(
+        "/score_batch",
+        json={
+            "items": [
+                {
+                    "drive_id": "drive-1",
+                    "day": str(date(2026, 2, 20)),
+                    "features": features,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Feature schema mismatch" in response.text

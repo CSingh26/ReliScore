@@ -3,14 +3,12 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 
 import joblib
 import numpy as np
 import pandas as pd
-from sklearn.linear_model import LogisticRegression
 
 from app.schemas import ReasonCode, RiskBucket
 
@@ -26,6 +24,7 @@ def _risk_bucket(score: float) -> RiskBucket:
 @dataclass
 class LoadedModel:
     model: object
+    scaler: object | None
     model_type: str
     feature_columns: list[str]
     fill_values: dict[str, float]
@@ -47,26 +46,54 @@ class ModelStore:
         with self._lock:
             version = self._resolve_version()
             artifact_dir = self.artifacts_root / version
+
             bundle = joblib.load(artifact_dir / "model.joblib")
             metrics = self._load_json(artifact_dir / "metrics.json", default={})
             version_meta = self._load_json(artifact_dir / "version.json", default={})
+            feature_schema = self._load_json(artifact_dir / "feature_schema.json", default={})
+
+            feature_columns = self._resolve_feature_columns(bundle=bundle, feature_schema=feature_schema)
+            horizon_days = int(version_meta.get("horizon_days", bundle.get("horizon_days", 30)))
+            model_version = str(version_meta.get("model_version", version))
 
             self.loaded = LoadedModel(
                 model=bundle["model"],
-                model_type=bundle.get("model_type", "UnknownModel"),
-                feature_columns=list(bundle["feature_columns"]),
-                fill_values={k: float(v) for k, v in bundle.get("fill_values", {}).items()},
-                feature_weights={k: float(v) for k, v in bundle.get("feature_weights", {}).items()},
-                horizon_days=int(bundle.get("horizon_days", version_meta.get("horizon_days", 14))),
-                model_version=str(version_meta.get("model_version", version)),
+                scaler=bundle.get("scaler"),
+                model_type=str(bundle.get("model_type", "UnknownModel")),
+                feature_columns=feature_columns,
+                fill_values={
+                    key: float(value)
+                    for key, value in bundle.get("fill_values", {}).items()
+                },
+                feature_weights={
+                    key: float(value)
+                    for key, value in bundle.get("feature_weights", {}).items()
+                },
+                horizon_days=horizon_days,
+                model_version=model_version,
                 metrics=metrics,
             )
             return self.loaded
 
-    def score(self, features: dict[str, float | None]) -> tuple[float, RiskBucket, list[ReasonCode]]:
+    def score(
+        self,
+        features: dict[str, float | None],
+    ) -> tuple[float, RiskBucket, list[ReasonCode]]:
         if self.loaded is None:
             self.load()
         assert self.loaded is not None
+
+        expected_keys = set(self.loaded.feature_columns)
+        provided_keys = set(features.keys())
+
+        missing = sorted(expected_keys - provided_keys)
+        extra = sorted(provided_keys - expected_keys)
+        if missing or extra:
+            raise ValueError(
+                "Feature schema mismatch. "
+                f"Missing keys: {missing if missing else 'none'}. "
+                f"Unexpected keys: {extra if extra else 'none'}."
+            )
 
         row = {}
         for feature in self.loaded.feature_columns:
@@ -77,11 +104,17 @@ class ModelStore:
                 row[feature] = float(raw_value)
 
         frame = pd.DataFrame([row], columns=self.loaded.feature_columns)
-        probabilities = self.loaded.model.predict_proba(frame)
+        model_input = frame
+        if self.loaded.scaler is not None:
+            scaled = self.loaded.scaler.transform(frame.to_numpy(dtype=np.float64))
+            model_input = pd.DataFrame(scaled, columns=self.loaded.feature_columns)
+
+        probabilities = self.loaded.model.predict_proba(model_input)
         risk_score = float(probabilities[:, 1][0]) if probabilities.ndim > 1 else float(probabilities[0])
 
         reasons: list[ReasonCode] = []
-        for feature_name, value in row.items():
+        for feature_name in self.loaded.feature_columns:
+            value = float(row[feature_name])
             weight = float(self.loaded.feature_weights.get(feature_name, 0.0))
             contribution = float(weight * value)
             direction = "UP" if contribution >= 0 else "DOWN"
@@ -97,96 +130,56 @@ class ModelStore:
 
         if self.requested_version and self.requested_version != "latest":
             candidate = self.artifacts_root / self.requested_version
-            if candidate.exists():
-                return self.requested_version
-            raise FileNotFoundError(f"Requested model version not found: {self.requested_version}")
-
-        active_file = self.artifacts_root / "ACTIVE_MODEL"
-        if active_file.exists():
-            version = active_file.read_text(encoding="utf-8").strip()
-            if version and (self.artifacts_root / version).exists():
-                return version
+            if not candidate.exists():
+                raise FileNotFoundError(f"Requested model version not found: {self.requested_version}")
+            self._validate_artifact_dir(candidate)
+            return self.requested_version
 
         candidates = [
             path
             for path in self.artifacts_root.iterdir()
-            if path.is_dir() and (path / "model.joblib").exists()
+            if path.is_dir()
         ]
-        if candidates:
-            latest = sorted(candidates, key=lambda item: item.stat().st_mtime, reverse=True)[0]
-            return latest.name
+        candidates = [path for path in candidates if self._is_valid_artifact_dir(path)]
 
-        return self._bootstrap_demo_model()
+        if not candidates:
+            raise FileNotFoundError(
+                f"No model artifacts found in {self.artifacts_root}. "
+                "Train a model first (make train-h30-all or make train-smoke)."
+            )
 
-    def _bootstrap_demo_model(self) -> str:
-        demo_version = f"demo-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
-        out_dir = self.artifacts_root / demo_version
-        out_dir.mkdir(parents=True, exist_ok=True)
+        latest = sorted(candidates, key=lambda item: item.stat().st_mtime, reverse=True)[0]
+        return latest.name
 
-        feature_columns = [
-            "age_days",
-            "smart_5_mean_7d",
-            "smart_5_slope_14d",
-            "smart_197_max_30d",
-            "smart_197_mean_7d",
-            "smart_198_delta_7d",
-            "smart_199_volatility_30d",
-            "temperature_mean_7d",
-            "read_latency_mean_7d",
-            "write_latency_mean_7d",
-            "missing_smart_197_30d",
+    def _is_valid_artifact_dir(self, artifact_dir: Path) -> bool:
+        required_files = [
+            artifact_dir / "model.joblib",
+            artifact_dir / "version.json",
+            artifact_dir / "feature_schema.json",
+            artifact_dir / "metrics.json",
         ]
+        return all(path.exists() for path in required_files)
 
-        rng = np.random.default_rng(42)
-        x = rng.normal(0, 1, size=(4000, len(feature_columns)))
-        linear = (
-            0.3 * x[:, 0]
-            + 1.1 * x[:, 1]
-            + 1.3 * x[:, 3]
-            + 1.5 * x[:, 4]
-            + 1.0 * x[:, 5]
-            + 0.7 * x[:, 9]
-        )
-        probs = 1.0 / (1.0 + np.exp(-linear))
-        y = (probs > 0.65).astype(int)
+    def _validate_artifact_dir(self, artifact_dir: Path) -> None:
+        if not self._is_valid_artifact_dir(artifact_dir):
+            raise FileNotFoundError(
+                f"Artifact directory {artifact_dir} is missing one or more required files: "
+                "model.joblib, version.json, feature_schema.json, metrics.json"
+            )
 
-        model = LogisticRegression(max_iter=1000, class_weight="balanced", random_state=42)
-        model.fit(x, y)
+    @staticmethod
+    def _resolve_feature_columns(bundle: dict, feature_schema: dict) -> list[str]:
+        ordered_features = feature_schema.get("ordered_features")
+        if isinstance(ordered_features, list) and ordered_features:
+            columns = [str(item.get("name")) for item in ordered_features if isinstance(item, dict)]
+            if columns and all(columns):
+                return columns
 
-        bundle = {
-            "model": model,
-            "model_type": "LogisticRegression",
-            "feature_columns": feature_columns,
-            "fill_values": {name: 0.0 for name in feature_columns},
-            "feature_weights": {
-                feature: float(weight)
-                for feature, weight in zip(feature_columns, model.coef_[0], strict=False)
-            },
-            "horizon_days": 14,
-        }
-        joblib.dump(bundle, out_dir / "model.joblib")
+        bundle_features = bundle.get("feature_columns")
+        if isinstance(bundle_features, list) and bundle_features:
+            return [str(name) for name in bundle_features]
 
-        metrics = {
-            "pr_auc": 0.68,
-            "recall_at_top_1pct": 0.29,
-            "brier_score": 0.16,
-            "note": "Demo synthetic model generated automatically.",
-        }
-        (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-
-        version_meta = {
-            "model_version": demo_version,
-            "train_date": datetime.now(timezone.utc).isoformat(),
-            "horizon_days": 14,
-        }
-        (out_dir / "version.json").write_text(json.dumps(version_meta, indent=2), encoding="utf-8")
-        (out_dir / "model_card.md").write_text(
-            "# Demo Model\n\nAuto-generated fallback model for local runs.",
-            encoding="utf-8",
-        )
-
-        (self.artifacts_root / "ACTIVE_MODEL").write_text(demo_version, encoding="utf-8")
-        return demo_version
+        raise ValueError("Unable to resolve feature columns from feature_schema.json or model bundle")
 
     @staticmethod
     def _load_json(path: Path, default: dict) -> dict:

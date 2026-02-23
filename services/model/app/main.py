@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from app.model_loader import ModelStore
 from app.schemas import (
@@ -42,7 +42,10 @@ def create_app() -> FastAPI:
 
     @app.post("/score", response_model=ScoreResponse)
     def score(item: ScoreRequest) -> ScoreResponse:
-        risk_score, risk_bucket, top_reasons = model_store.score(item.features)
+        try:
+            risk_score, risk_bucket, top_reasons = model_store.score(item.features)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
         return ScoreResponse(
             drive_id=item.drive_id,
             day=item.day,
@@ -60,7 +63,10 @@ def create_app() -> FastAPI:
         scored_at = datetime.now(timezone.utc)
 
         for item in payload.items:
-            risk_score, risk_bucket, top_reasons = model_store.score(item.features)
+            try:
+                risk_score, risk_bucket, top_reasons = model_store.score(item.features)
+            except ValueError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
             responses.append(
                 ScoreResponse(
                     drive_id=item.drive_id,
