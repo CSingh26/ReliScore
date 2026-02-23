@@ -1,7 +1,26 @@
 import { DriveDetailResponse, DriveListResponse, FleetSummary } from './types';
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? process.env.API_BASE_URL ?? '/backend';
+function resolveApiBaseUrl() {
+  const publicBase = process.env.NEXT_PUBLIC_API_BASE_URL;
+  const internalBase = process.env.API_BASE_URL ?? process.env.API_INTERNAL_URL;
+
+  // Server components fetch from inside the web container and need an absolute URL.
+  if (typeof window === 'undefined') {
+    if (internalBase) {
+      return internalBase;
+    }
+
+    if (publicBase && /^https?:\/\//.test(publicBase)) {
+      return publicBase;
+    }
+
+    return 'http://localhost:4000/api/v1';
+  }
+
+  return publicBase ?? 'http://localhost:4000/api/v1';
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 async function getJson<T>(path: string): Promise<T | null> {
   try {
