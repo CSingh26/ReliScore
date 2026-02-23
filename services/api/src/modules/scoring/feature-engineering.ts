@@ -1,6 +1,6 @@
 import { FeaturesDaily, Prisma, PrismaClient, TelemetryDaily } from '@prisma/client';
 
-export interface FeatureVector extends Record<string, number> {
+export type FeatureVector = Record<string, number> & {
   age_days: number;
   smart_5_mean_7d: number;
   smart_5_slope_14d: number;
@@ -12,7 +12,7 @@ export interface FeatureVector extends Record<string, number> {
   read_latency_mean_7d: number;
   write_latency_mean_7d: number;
   missing_smart_197_30d: number;
-}
+};
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -112,7 +112,7 @@ function toFeaturesDailyCreateInput(
     readLatencyMean7d: vector.read_latency_mean_7d,
     writeLatencyMean7d: vector.write_latency_mean_7d,
     missingSmart19730d: vector.missing_smart_197_30d > 0,
-    featureVector: vector as Prisma.InputJsonValue,
+    featureVector: toJsonValue(vector),
   };
 }
 
@@ -130,8 +130,12 @@ function toFeaturesDailyUpdateInput(vector: FeatureVector): Prisma.FeaturesDaily
     readLatencyMean7d: vector.read_latency_mean_7d,
     writeLatencyMean7d: vector.write_latency_mean_7d,
     missingSmart19730d: vector.missing_smart_197_30d > 0,
-    featureVector: vector as Prisma.InputJsonValue,
+    featureVector: toJsonValue(vector),
   };
+}
+
+function toJsonValue(vector: FeatureVector): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(vector)) as Prisma.InputJsonValue;
 }
 
 export function featureVectorFromRow(row: FeaturesDaily): FeatureVector {

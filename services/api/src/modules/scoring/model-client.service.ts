@@ -2,11 +2,12 @@ import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
 import { scoreResponseSchema } from '@reliscore/shared';
 import { z } from 'zod';
+import { FeatureVector } from './feature-engineering';
 
 interface ScoreBatchItem {
   drive_id: string;
   day: string;
-  features: Record<string, number>;
+  features: FeatureVector;
 }
 
 const scoreBatchResponseSchema = z.array(scoreResponseSchema);

@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Param, Query } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { RiskBucket } from '@prisma/client';
 import { z } from 'zod';
@@ -25,7 +25,15 @@ export class DrivesController {
 
   @Get()
   async list(@Query() query: Record<string, unknown>) {
-    const parsed = parseWithSchema(listDrivesQuerySchema, query);
+    const parsedQuery = listDrivesQuerySchema.safeParse(query);
+    if (!parsedQuery.success) {
+      throw new BadRequestException({
+        message: 'Request validation failed',
+        issues: parsedQuery.error.issues,
+      });
+    }
+
+    const parsed = parsedQuery.data;
     return this.drivesService.listDrives({
       risk: parsed.risk,
       page: parsed.page,
