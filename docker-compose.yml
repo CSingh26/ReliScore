@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: reliscore-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: reliscore
+      POSTGRES_PASSWORD: reliscore
+      POSTGRES_DB: reliscore
+    ports:
+      - "5432:5432"
+    volumes:
+      - reliscore_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reliscore -d reliscore"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  reliscore_pgdata:

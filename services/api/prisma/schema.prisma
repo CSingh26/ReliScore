@@ -1,0 +1,122 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum RiskBucket {
+  LOW
+  MED
+  HIGH
+}
+
+enum AuditAction {
+  FEATURE_RUN
+  SCORE_RUN
+  INGESTION
+}
+
+model Drive {
+  driveId        String          @id @map("drive_id")
+  model          String
+  capacityBytes  BigInt?         @map("capacity_bytes")
+  datacenter     String?
+  firstSeen      DateTime?       @db.Date @map("first_seen")
+  lastSeen       DateTime?       @db.Date @map("last_seen")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  telemetryDaily TelemetryDaily[]
+  featuresDaily  FeaturesDaily[]
+  predictions    Prediction[]
+  auditLogs      AuditLog[]
+
+  @@map("drives")
+}
+
+model TelemetryDaily {
+  driveId          String    @map("drive_id")
+  day              DateTime  @db.Date
+  smart5           Int?      @map("smart_5")
+  smart187         Int?      @map("smart_187")
+  smart188         Int?      @map("smart_188")
+  smart197         Int?      @map("smart_197")
+  smart198         Int?      @map("smart_198")
+  smart199         Int?      @map("smart_199")
+  temperature      Float?
+  ioReadLatencyMs  Float?    @map("io_read_latency_ms")
+  ioWriteLatencyMs Float?    @map("io_write_latency_ms")
+  isFailedToday    Boolean   @default(false) @map("is_failed_today")
+  ingestedAt       DateTime  @default(now()) @map("ingested_at")
+  drive            Drive     @relation(fields: [driveId], references: [driveId], onDelete: Cascade)
+
+  @@id([driveId, day])
+  @@index([day])
+  @@map("telemetry_daily")
+}
+
+model FeaturesDaily {
+  driveId               String   @map("drive_id")
+  day                   DateTime @db.Date
+  labelFailWithin14d    Boolean  @default(false) @map("label_fail_within_14d")
+  ageDays               Int?     @map("age_days")
+  smart5Mean7d          Float?   @map("smart_5_mean_7d")
+  smart5Slope14d        Float?   @map("smart_5_slope_14d")
+  smart197Max30d        Float?   @map("smart_197_max_30d")
+  smart197Mean7d        Float?   @map("smart_197_mean_7d")
+  smart198Delta7d       Float?   @map("smart_198_delta_7d")
+  smart199Volatility30d Float?   @map("smart_199_volatility_30d")
+  temperatureMean7d     Float?   @map("temperature_mean_7d")
+  readLatencyMean7d     Float?   @map("read_latency_mean_7d")
+  writeLatencyMean7d    Float?   @map("write_latency_mean_7d")
+  missingSmart19730d    Boolean  @default(false) @map("missing_smart_197_30d")
+  featureVector         Json?    @map("feature_vector")
+  createdAt             DateTime @default(now()) @map("created_at")
+  drive                 Drive    @relation(fields: [driveId], references: [driveId], onDelete: Cascade)
+
+  @@id([driveId, day])
+  @@index([day])
+  @@map("features_daily")
+}
+
+model Prediction {
+  driveId      String     @map("drive_id")
+  day          DateTime   @db.Date
+  modelVersion String     @map("model_version")
+  riskScore    Float      @map("risk_score")
+  riskBucket   RiskBucket @map("risk_bucket")
+  reasonCodes  Json       @map("reason_codes")
+  scoredAt     DateTime   @default(now()) @map("scored_at")
+  drive        Drive      @relation(fields: [driveId], references: [driveId], onDelete: Cascade)
+
+  @@id([driveId, day, modelVersion])
+  @@index([riskBucket, day])
+  @@map("predictions")
+}
+
+model AuditLog {
+  id        String      @id @default(uuid())
+  driveId   String?     @map("drive_id")
+  action    AuditAction
+  payload   Json?
+  createdAt DateTime    @default(now()) @map("created_at")
+  drive     Drive?      @relation(fields: [driveId], references: [driveId], onDelete: SetNull)
+
+  @@index([action, createdAt])
+  @@map("audit_log")
+}
+
+model ModelRegistry {
+  modelVersion      String   @id @map("model_version")
+  artifactUri       String   @map("artifact_uri")
+  metrics           Json
+  featureSchema     Json     @map("feature_schema")
+  trainedDataWindow Json     @map("trained_data_window")
+  trainDate         DateTime @map("train_date")
+  horizonDays       Int      @default(14) @map("horizon_days")
+  status            String   @default("active")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@map("model_registry")
+}
