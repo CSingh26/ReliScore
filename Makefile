@@ -1,6 +1,6 @@
 SHELL := /bin/sh
 
-.PHONY: dev up down logs test test-api test-model lint train seed
+.PHONY: dev up down stop logs test test-api test-model lint train seed backblaze-all train-h30-all train-smoke
 
 dev:
 	docker compose up --build
@@ -11,6 +11,14 @@ up:
 down:
 	docker compose down -v
 
+stop:
+	@if [ -f docker-compose.yml ]; then docker compose down --remove-orphans; fi
+	@ids=$$(docker ps -aq --filter name=reliscore); \
+	if [ -n "$$ids" ]; then docker stop $$ids; fi
+	@ids=$$(docker ps -aq --filter label=com.docker.compose.project=reliscore); \
+	if [ -n "$$ids" ]; then docker stop $$ids; fi
+	@docker ps
+
 logs:
 	docker compose logs -f --tail=200
 
@@ -20,6 +28,25 @@ seed:
 train:
 	python3 -m pip install -r ml/training/requirements.txt
 	cd ml/training && python3 -m src.pipeline --quarter 2020_Q2
+
+backblaze-all:
+	python3 -m pip install -r ml/training/requirements.txt
+	python3 ml/training/backblaze_manifest.py --out data/backblaze/manifest.json
+	python3 ml/training/download_backblaze.py --manifest data/backblaze/manifest.json --dest data/backblaze/zips
+	python3 ml/training/build_warehouse.py --zips data/backblaze/zips --out data/backblaze/warehouse
+	python3 ml/training/build_features.py --warehouse data/backblaze/warehouse --out data/backblaze/features_h30 --horizon-days 30
+
+train-h30-all:
+	python3 -m pip install -r ml/training/requirements.txt
+	python3 ml/training/train_streaming.py --features data/backblaze/features_h30 --horizon-days 30
+
+train-smoke:
+	python3 -m pip install -r ml/training/requirements.txt
+	python3 ml/training/backblaze_manifest.py --out data/backblaze/manifest.json --include_year_from 2023
+	python3 ml/training/download_backblaze.py --manifest data/backblaze/manifest.json --dest data/backblaze/zips --max_files 1
+	python3 ml/training/build_warehouse.py --zips data/backblaze/zips --out data/backblaze/warehouse --max_csv_files 2
+	python3 ml/training/build_features.py --warehouse data/backblaze/warehouse --out data/backblaze/features_h30 --horizon-days 30 --row-limit 200000
+	python3 ml/training/train_streaming.py --features data/backblaze/features_h30 --horizon-days 30 --batch-size 50000 --test-months 6 --max-train-batches 6 --max-test-batches 2
 
 test:
 	pnpm test

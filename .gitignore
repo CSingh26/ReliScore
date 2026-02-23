@@ -16,6 +16,8 @@ __pycache__/
 
 artifacts/
 data/
+data/backblaze/
+data/**/*
 ml/training/data/
 tmp/
 
