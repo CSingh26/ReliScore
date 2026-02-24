@@ -20,6 +20,10 @@ SMART_FEATURE_COLUMNS = [
 ]
 
 
+def _sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
 def _window_feature_exprs() -> str:
     expressions: list[str] = []
     for column in SMART_FEATURE_COLUMNS:
@@ -53,6 +57,8 @@ def build_features(
 
     feature_exprs = _window_feature_exprs()
     limit_clause = f"LIMIT {row_limit}" if row_limit and row_limit > 0 else ""
+    warehouse_glob_literal = _sql_literal(str(warehouse_dir / "**" / "*.parquet"))
+    out_literal = _sql_literal(str(out_dir))
 
     conn.execute(
         f"""
@@ -73,7 +79,7 @@ def build_features(
               TRY_CAST(smart_241_raw AS DOUBLE) AS smart_241_raw,
               TRY_CAST(smart_242_raw AS DOUBLE) AS smart_242_raw,
               TRY_CAST(temperature AS DOUBLE) AS temperature
-            FROM read_parquet(?, union_by_name=true)
+            FROM read_parquet({warehouse_glob_literal}, union_by_name=true)
             WHERE date IS NOT NULL
               AND serial_number IS NOT NULL
           ), enriched AS (
@@ -112,14 +118,13 @@ def build_features(
           )
           SELECT * FROM final
           {limit_clause}
-        ) TO ? (
+        ) TO {out_literal} (
           FORMAT PARQUET,
           PARTITION_BY (year, month),
           OVERWRITE_OR_IGNORE TRUE,
           COMPRESSION ZSTD
         )
-        """,
-        [str(warehouse_dir / "**" / "*.parquet"), str(out_dir)],
+        """
     )
 
     conn.close()

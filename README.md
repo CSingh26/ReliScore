@@ -88,9 +88,12 @@ Dashboard is immediately populated with meaningful demo data.
 make dev        # docker compose up --build
 make up         # detached mode
 make down       # stop + remove volumes
+make stop       # safe stop for reliscore compose + containers
 make logs       # tail logs
 make seed       # rerun seed in API container
-make train      # run ML training pipeline locally
+make backblaze-all  # manifest + download + warehouse + H30 features
+make train-h30-all  # full pipeline + streaming train
+make train-smoke    # fast end-to-end smoke run
 make test       # pnpm test + pytest
 ```
 
@@ -124,8 +127,13 @@ Training code is in `ml/training`.
 
 ```bash
 python3 -m pip install -r ml/training/requirements.txt
-cd ml/training
-python3 -m src.pipeline --quarter 2020_Q2 --max-drives 500 --horizon-days 14
+make train-smoke
+```
+
+For full all-period Backblaze training:
+
+```bash
+make train-h30-all
 ```
 
 Artifacts are written to:
@@ -153,10 +161,20 @@ curl -X POST http://localhost:4000/api/v1/score/run \
 
 ### Direct model scoring
 
+Feature keys must exactly match `/model/info` -> `features`.
+
 ```bash
-curl -X POST http://localhost:8000/score_batch \
-  -H "Content-Type: application/json" \
-  -d '{"items":[{"drive_id":"DRV-0001","day":"2026-02-23","features":{"age_days":120,"smart_5_mean_7d":6,"smart_5_slope_14d":0.3,"smart_197_max_30d":12,"smart_197_mean_7d":5,"smart_198_delta_7d":2,"smart_199_volatility_30d":1.8,"temperature_mean_7d":35,"read_latency_mean_7d":4.4,"write_latency_mean_7d":5.1,"missing_smart_197_30d":0}}]}'
+python3 - <<'PY'
+import requests
+
+base = "http://localhost:8000"
+info = requests.get(f"{base}/model/info", timeout=30).json()
+features = {name: 0.0 for name in info["features"]}
+payload = {"drive_id": "DRV-0001", "day": "2026-02-23", "features": features}
+response = requests.post(f"{base}/score", json=payload, timeout=30)
+print(response.status_code)
+print(response.json())
+PY
 ```
 
 ## Testing

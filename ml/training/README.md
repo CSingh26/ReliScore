@@ -1,26 +1,60 @@
-# Training Pipeline
+# Backblaze H=30 Training
 
-This package trains the failure-risk model from Backblaze telemetry and writes versioned artifacts to:
-`services/model/artifacts/<model_version>/`.
+This directory contains the full-dataset Backblaze training pipeline for a
+30-day failure horizon (`label_30d`).
 
-## Workflow
+## Disk And Runtime Warning
 
-1. Install Python deps:
-   `pip install -r ml/training/requirements.txt`
-2. Download Backblaze data with caching:
-   `python -m src.download_backblaze --quarter 2020_Q2`
-3. Prepare model dataset:
-   `python -m src.prepare_dataset --input-dir ml/training/data/cache/2020_Q2`
-4. Train + emit artifacts:
-   `python -m src.train --prepared ml/training/data/processed/training_dataset.csv`
+Backblaze ZIPs are large and the full historical ingest requires significant
+disk and time. Plan for tens of GB locally when running the full pipeline.
 
-Or run the full pipeline:
-`python -m src.pipeline --quarter 2020_Q2`
+## Quick Smoke Test
 
-## Output Artifacts
+Runs a minimal end-to-end validation with one ZIP and limited partitions:
 
+```bash
+make train-smoke
+```
+
+This executes:
+1. Build dataset manifest.
+2. Download one ZIP.
+3. Build parquet warehouse (limited CSV files).
+4. Build H=30 features (limited rows).
+5. Train streaming model and export artifacts.
+
+## Full Training (All Available Backblaze Periods)
+
+```bash
+make train-h30-all
+```
+
+This executes:
+1. `backblaze_manifest.py` to collect all annual + quarterly datasets.
+2. `download_backblaze.py` to cache ZIPs under `data/backblaze/zips/`.
+3. `build_warehouse.py` to convert ZIP CSVs into parquet partitions.
+4. `build_features.py` to create `label_30d` + rolling features.
+5. `train_streaming.py` to train incrementally across all rows.
+
+## Manual Commands
+
+```bash
+python3 ml/training/backblaze_manifest.py --out data/backblaze/manifest.json
+python3 ml/training/download_backblaze.py --manifest data/backblaze/manifest.json --dest data/backblaze/zips
+python3 ml/training/build_warehouse.py --zips data/backblaze/zips --out data/backblaze/warehouse --clean
+python3 ml/training/build_features.py --warehouse data/backblaze/warehouse --out data/backblaze/features_h30 --horizon-days 30 --clean
+python3 ml/training/train_streaming.py --features data/backblaze/features_h30 --horizon-days 30
+```
+
+## Artifact Output
+
+Artifacts are written to:
+
+`services/model/artifacts/backblaze_h30_all_<YYYYMMDDHHMM>/`
+
+Required files:
 - `model.joblib`
-- `metrics.json` (includes PR-AUC, recall@top_k, calibration curve)
-- `model_card.md`
-- `version.json`
 - `feature_schema.json`
+- `metrics.json`
+- `version.json`
+- `model_card.md`

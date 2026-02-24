@@ -31,6 +31,10 @@ def _quote(identifier: str) -> str:
     return f'"{identifier.replace("\"", "\"\"")}"'
 
 
+def _sql_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
 def _column_names(conn: duckdb.DuckDBPyConnection, csv_path: Path) -> set[str]:
     query = "SELECT * FROM read_csv_auto(?, header=true, all_varchar=true, ignore_errors=true, sample_size=-1) LIMIT 0"
     relation = conn.execute(query, [str(csv_path)])
@@ -69,6 +73,8 @@ def _canonical_select_exprs(available_columns: set[str]) -> str:
 def _ingest_csv(conn: duckdb.DuckDBPyConnection, csv_path: Path, out_dir: Path) -> None:
     available_columns = _column_names(conn, csv_path)
     select_exprs = _canonical_select_exprs(available_columns)
+    csv_literal = _sql_literal(str(csv_path))
+    out_literal = _sql_literal(str(out_dir))
 
     conn.execute(
         f"""
@@ -76,7 +82,7 @@ def _ingest_csv(conn: duckdb.DuckDBPyConnection, csv_path: Path, out_dir: Path) 
           WITH source AS (
             SELECT
               {select_exprs}
-            FROM read_csv_auto(?, header=true, all_varchar=true, ignore_errors=true, sample_size=-1)
+            FROM read_csv_auto({csv_literal}, header=true, all_varchar=true, ignore_errors=true, sample_size=-1)
           ), normalized AS (
             SELECT
               *,
@@ -87,15 +93,20 @@ def _ingest_csv(conn: duckdb.DuckDBPyConnection, csv_path: Path, out_dir: Path) 
               AND serial_number IS NOT NULL
           )
           SELECT * FROM normalized
-        ) TO ? (
+        ) TO {out_literal} (
           FORMAT PARQUET,
           PARTITION_BY (year, month),
           OVERWRITE_OR_IGNORE TRUE,
           COMPRESSION ZSTD
         )
-        """,
-        [str(csv_path), str(out_dir)],
+        """
     )
+
+
+def _is_metadata_csv(path: Path) -> bool:
+    if path.name.startswith("._"):
+        return True
+    return "__MACOSX" in path.parts
 
 
 def build_warehouse(zips_dir: Path, out_dir: Path, max_csv_files: int | None = None) -> int:
@@ -117,6 +128,8 @@ def build_warehouse(zips_dir: Path, out_dir: Path, max_csv_files: int | None = N
                 archive.extractall(temp_root)
 
             for csv_path in sorted(temp_root.rglob("*.csv")):
+                if _is_metadata_csv(csv_path):
+                    continue
                 _ingest_csv(conn, csv_path, out_dir)
                 processed_csv_count += 1
                 if max_csv_files and processed_csv_count >= max_csv_files:
