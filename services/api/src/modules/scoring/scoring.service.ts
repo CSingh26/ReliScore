@@ -145,14 +145,21 @@ export class ScoringService {
 
     const nextScores = ordered.map((item, index) => {
       let riskBucket: RiskBucket = 'LOW';
+      let bucketPosition = 0;
+      let bucketSize = Math.max(1, total - highCount - medCount);
       if (index < highCount) {
         riskBucket = 'HIGH';
+        bucketPosition = index;
+        bucketSize = highCount;
       } else if (index < highCount + medCount) {
         riskBucket = 'MED';
+        bucketPosition = index - highCount;
+        bucketSize = medCount;
       }
 
       return {
         ...item,
+        risk_score: this.operationalScoreForBucket(riskBucket, bucketPosition, bucketSize),
         risk_bucket: riskBucket,
       };
     });
@@ -172,6 +179,27 @@ export class ScoringService {
     }
 
     return distribution;
+  }
+
+  private operationalScoreForBucket(
+    bucket: RiskBucket,
+    bucketPosition: number,
+    bucketSize: number,
+  ): number {
+    const clampedSize = Math.max(1, bucketSize);
+    const t = clampedSize === 1 ? 0.5 : bucketPosition / (clampedSize - 1);
+
+    let max = 0.39;
+    let min = 0.02;
+    if (bucket === 'HIGH') {
+      max = 0.95;
+      min = 0.75;
+    } else if (bucket === 'MED') {
+      max = 0.74;
+      min = 0.4;
+    }
+
+    return Number((max - (max - min) * t).toFixed(6));
   }
 
   private async resolveLatestTelemetryDay(): Promise<Date | null> {
