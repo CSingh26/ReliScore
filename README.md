@@ -94,6 +94,7 @@ make seed       # rerun seed in API container
 make backblaze-all  # manifest + download + warehouse + H30 features
 make train-h30-all  # full pipeline + streaming train
 make train-smoke    # fast end-to-end smoke run
+make backfill-fleet # load warehouse drives into app DB + run scoring
 make test       # pnpm test + pytest
 ```
 
@@ -104,6 +105,7 @@ make test       # pnpm test + pytest
 - `API_PORT`
 - `MODEL_SERVICE_URL`
 - `MODEL_SERVICE_TOKEN`
+- `RUN_DEMO_SEED`
 - `NEXT_PUBLIC_API_BASE_URL`
 - `API_INTERNAL_URL`
 - `MODEL_ARTIFACTS_ROOT`
@@ -134,6 +136,26 @@ For full all-period Backblaze training:
 
 ```bash
 make train-h30-all
+```
+
+### Backfill Dashboard Fleet From Warehouse
+
+After warehouse build, replace demo DB rows with Backblaze drives and run scoring:
+
+```bash
+make backfill-fleet
+```
+
+Optional sizing knobs:
+- `BACKFILL_MAX_DRIVES` (default `5000`)
+- `BACKFILL_LOOKBACK_DAYS` (default `45`)
+- `BACKFILL_DATABASE_URL` (default `postgresql://reliscore:reliscore@postgres:5432/reliscore`)
+- `BACKFILL_SCORE_URL` (default `http://api:4000/api/v1/score/run`)
+
+Example:
+
+```bash
+BACKFILL_MAX_DRIVES=10000 BACKFILL_LOOKBACK_DAYS=60 make backfill-fleet
 ```
 
 Artifacts are written to:

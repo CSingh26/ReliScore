@@ -52,6 +52,7 @@ services:
       MODEL_SERVICE_URL: http://model:8000
       MODEL_SERVICE_TOKEN: local-dev-token
       MODEL_VERSION: latest
+      RUN_DEMO_SEED: ${RUN_DEMO_SEED:-true}
     ports:
       - "4000:4000"
     depends_on:

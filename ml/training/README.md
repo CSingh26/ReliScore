@@ -58,3 +58,14 @@ Required files:
 - `metrics.json`
 - `version.json`
 - `model_card.md`
+
+## Backfill App Database
+
+To populate the API/Postgres tables from parquet warehouse for dashboard use:
+
+```bash
+make backfill-fleet
+```
+
+This imports real Backblaze drives/telemetry (no synthetic scores) and triggers
+`POST /api/v1/score/run` for the latest warehouse day.
