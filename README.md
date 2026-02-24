@@ -149,6 +149,7 @@ make backfill-fleet
 Optional sizing knobs:
 - `BACKFILL_MAX_DRIVES` (default `5000`)
 - `BACKFILL_LOOKBACK_DAYS` (default `45`)
+- `BACKFILL_MIN_HISTORY_DAYS` (default `14`)
 - `BACKFILL_DATABASE_URL` (default `postgresql://reliscore:reliscore@postgres:5432/reliscore`)
 - `BACKFILL_SCORE_URL` (default `http://api:4000/api/v1/score/run`)
 

@@ -56,6 +56,7 @@ backfill-fleet:
 		--database-url '$${BACKFILL_DATABASE_URL:-postgresql://reliscore:reliscore@postgres:5432/reliscore}' \
 		--lookback-days '$${BACKFILL_LOOKBACK_DAYS:-45}' \
 		--max-drives '$${BACKFILL_MAX_DRIVES:-5000}' \
+		--min-history-days '$${BACKFILL_MIN_HISTORY_DAYS:-14}' \
 		--score-url '$${BACKFILL_SCORE_URL:-http://api:4000/api/v1/score/run}'"
 
 test:

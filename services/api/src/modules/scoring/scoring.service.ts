@@ -57,9 +57,10 @@ export class ScoringService {
     }));
 
     const scores = await this.modelClient.scoreBatch(batchItems);
+    const { scored, bucketMode } = this.applyOperationalBuckets(scores);
 
     await this.prisma.$transaction(
-      scores.map((score) =>
+      scored.map((score) =>
         this.prisma.prediction.upsert({
           where: {
             driveId_day_modelVersion: {
@@ -92,8 +93,10 @@ export class ScoringService {
         payload: {
           day: toDateOnlyString(dateOnly),
           generatedFeatures,
-          storedPredictions: scores.length,
-          modelVersion: scores[0]?.model_version ?? 'unknown',
+          storedPredictions: scored.length,
+          modelVersion: scored[0]?.model_version ?? 'unknown',
+          bucketMode,
+          riskDistribution: this.bucketDistribution(scored.map((item) => item.risk_bucket as RiskBucket)),
         },
       },
     });
@@ -101,17 +104,74 @@ export class ScoringService {
     this.logger.info('Scoring run completed', {
       day: toDateOnlyString(dateOnly),
       generatedFeatures,
-      storedPredictions: scores.length,
-      modelVersion: scores[0]?.model_version,
+      storedPredictions: scored.length,
+      modelVersion: scored[0]?.model_version,
+      bucketMode,
     });
 
     return {
       status: 'completed',
       day: toDateOnlyString(dateOnly),
       generatedFeatures,
-      storedPredictions: scores.length,
-      modelVersion: scores[0]?.model_version ?? null,
+      storedPredictions: scored.length,
+      modelVersion: scored[0]?.model_version ?? null,
+      bucketMode,
     };
+  }
+
+  private applyOperationalBuckets<T extends { drive_id: string; risk_score: number; risk_bucket: string }>(
+    scores: T[],
+  ): { scored: T[]; bucketMode: 'model' | 'rank_fallback' } {
+    if (scores.length === 0) {
+      return { scored: [], bucketMode: 'model' };
+    }
+
+    const hasMediumOrHigh = scores.some((item) => item.risk_bucket === 'MED' || item.risk_bucket === 'HIGH');
+    if (hasMediumOrHigh) {
+      return { scored: scores, bucketMode: 'model' };
+    }
+
+    const ordered = [...scores].sort((a, b) => {
+      if (b.risk_score !== a.risk_score) {
+        return b.risk_score - a.risk_score;
+      }
+      return a.drive_id.localeCompare(b.drive_id);
+    });
+
+    const total = ordered.length;
+    const highCount = total >= 20 ? Math.ceil(total * 0.05) : Math.min(1, total);
+    const medCount =
+      total >= 10 ? Math.ceil(total * 0.15) : Math.min(1, Math.max(0, total - highCount));
+
+    const nextScores = ordered.map((item, index) => {
+      let riskBucket: RiskBucket = 'LOW';
+      if (index < highCount) {
+        riskBucket = 'HIGH';
+      } else if (index < highCount + medCount) {
+        riskBucket = 'MED';
+      }
+
+      return {
+        ...item,
+        risk_bucket: riskBucket,
+      };
+    });
+
+    return { scored: nextScores, bucketMode: 'rank_fallback' };
+  }
+
+  private bucketDistribution(buckets: RiskBucket[]) {
+    const distribution: Record<RiskBucket, number> = {
+      LOW: 0,
+      MED: 0,
+      HIGH: 0,
+    };
+
+    for (const bucket of buckets) {
+      distribution[bucket] += 1;
+    }
+
+    return distribution;
   }
 
   private async resolveLatestTelemetryDay(): Promise<Date | null> {

@@ -52,7 +52,9 @@ def _resolve_latest_day(conn: duckdb.DuckDBPyConnection, parquet_glob: str) -> d
 def _prepare_selected_drives(
     conn: duckdb.DuckDBPyConnection,
     parquet_glob: str,
+    start_day: date,
     latest_day: date,
+    min_history_days: int,
     max_drives: int | None,
 ) -> int:
     limit_clause = f"LIMIT {max_drives}" if max_drives and max_drives > 0 else ""
@@ -60,18 +62,40 @@ def _prepare_selected_drives(
     conn.execute(
         f"""
         CREATE OR REPLACE TEMP TABLE selected_drives AS
+        WITH candidates AS (
+          SELECT
+            serial_number,
+            COUNT(DISTINCT CAST(date AS DATE)) AS history_days,
+            MAX(CASE WHEN CAST(date AS DATE) = ? THEN 1 ELSE 0 END) AS seen_on_latest_day
+          FROM read_parquet(?, union_by_name=true)
+          WHERE serial_number IS NOT NULL
+            AND CAST(date AS DATE) BETWEEN ? AND ?
+          GROUP BY serial_number
+          HAVING COUNT(DISTINCT CAST(date AS DATE)) >= ?
+            AND MAX(CASE WHEN CAST(date AS DATE) = ? THEN 1 ELSE 0 END) = 1
+        )
         SELECT
-          serial_number,
-          COALESCE(ANY_VALUE(NULLIF(TRIM(model), '')), 'UNKNOWN') AS model,
-          MAX(TRY_CAST(capacity_bytes AS BIGINT)) AS capacity_bytes
-        FROM read_parquet(?, union_by_name=true)
-        WHERE CAST(date AS DATE) = ?
-          AND serial_number IS NOT NULL
-        GROUP BY serial_number
-        ORDER BY serial_number
+          t.serial_number,
+          COALESCE(ANY_VALUE(NULLIF(TRIM(t.model), '')), 'UNKNOWN') AS model,
+          MAX(TRY_CAST(t.capacity_bytes AS BIGINT)) AS capacity_bytes
+        FROM read_parquet(?, union_by_name=true) t
+        INNER JOIN candidates c ON c.serial_number = t.serial_number
+        WHERE CAST(t.date AS DATE) = ?
+          AND t.serial_number IS NOT NULL
+        GROUP BY t.serial_number
+        ORDER BY t.serial_number
         {limit_clause}
         """,
-        [parquet_glob, latest_day],
+        [
+            latest_day,
+            parquet_glob,
+            start_day,
+            latest_day,
+            min_history_days,
+            latest_day,
+            parquet_glob,
+            latest_day,
+        ],
     )
 
     return int(conn.execute("SELECT COUNT(*) FROM selected_drives").fetchone()[0])
@@ -124,6 +148,7 @@ def backfill(
     lookback_days: int,
     max_drives: int | None,
     batch_size: int,
+    min_history_days: int,
     clear_existing: bool,
     latest_day: date | None,
     score_url: str | None,
@@ -133,9 +158,18 @@ def backfill(
 
     resolved_latest_day = latest_day or _resolve_latest_day(conn, parquet_glob)
     start_day = resolved_latest_day - timedelta(days=lookback_days)
-    selected_drive_count = _prepare_selected_drives(conn, parquet_glob, resolved_latest_day, max_drives)
+    selected_drive_count = _prepare_selected_drives(
+        conn,
+        parquet_glob,
+        start_day,
+        resolved_latest_day,
+        min_history_days,
+        max_drives,
+    )
     if selected_drive_count == 0:
-        raise RuntimeError("No drives selected from latest day snapshot")
+        raise RuntimeError(
+            "No drives matched selection. Reduce --min-history-days or increase available warehouse history."
+        )
 
     drive_records: list[tuple[str, str, int | None, str, date, date]] = []
     for row in conn.execute(
@@ -255,6 +289,7 @@ def backfill(
                             "latest_day": resolved_latest_day.isoformat(),
                             "start_day": start_day.isoformat(),
                             "selected_drives": len(drive_records),
+                            "min_history_days": min_history_days,
                             "inserted_telemetry_rows": telemetry_inserted,
                             "loaded_at": datetime.now(timezone.utc).isoformat(),
                         }
@@ -280,6 +315,7 @@ def backfill(
             "latest_day": resolved_latest_day.isoformat(),
             "start_day": start_day.isoformat(),
             "selected_drives": len(drive_records),
+            "min_history_days": min_history_days,
             "inserted_telemetry_rows": telemetry_inserted,
             "score_result": score_response,
         },
@@ -299,6 +335,7 @@ def main() -> None:
     parser.add_argument("--lookback-days", type=int, default=45)
     parser.add_argument("--max-drives", type=int, default=5000)
     parser.add_argument("--batch-size", type=int, default=50_000)
+    parser.add_argument("--min-history-days", type=int, default=14)
     parser.add_argument("--latest-day", type=date.fromisoformat, default=None)
     parser.add_argument("--score-url", type=str, default=None)
     parser.add_argument("--no-clear-existing", action="store_true")
@@ -314,6 +351,7 @@ def main() -> None:
         lookback_days=args.lookback_days,
         max_drives=max_drives,
         batch_size=args.batch_size,
+        min_history_days=args.min_history_days,
         clear_existing=not args.no_clear_existing,
         latest_day=args.latest_day,
         score_url=args.score_url,

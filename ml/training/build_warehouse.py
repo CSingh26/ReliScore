@@ -96,7 +96,7 @@ def _ingest_csv(conn: duckdb.DuckDBPyConnection, csv_path: Path, out_dir: Path) 
         ) TO {out_literal} (
           FORMAT PARQUET,
           PARTITION_BY (year, month),
-          OVERWRITE_OR_IGNORE TRUE,
+          APPEND TRUE,
           COMPRESSION ZSTD
         )
         """
