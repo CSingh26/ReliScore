@@ -26,7 +26,7 @@ describe('FleetService', () => {
 
     expect(summary.totalDrives).toBe(120);
     expect(summary.drivesScoredToday).toBe(110);
-    expect(summary.predictedFailures14d).toBe(17);
+    expect(summary.predictedFailures30d).toBe(17);
     expect(summary.riskDistribution.HIGH).toBe(17);
   });
 });

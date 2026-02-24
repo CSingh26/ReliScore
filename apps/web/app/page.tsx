@@ -53,8 +53,8 @@ export default async function HomePage() {
           <p className="mt-2 text-2xl font-semibold">{summary.drivesScoredToday.toLocaleString()}</p>
         </Card>
         <Card>
-          <p className="text-sm text-muted-foreground">Predicted failures (14d)</p>
-          <p className="mt-2 text-2xl font-semibold">{summary.predictedFailures14d.toLocaleString()}</p>
+          <p className="text-sm text-muted-foreground">Predicted failures (30d)</p>
+          <p className="mt-2 text-2xl font-semibold">{summary.predictedFailures30d.toLocaleString()}</p>
         </Card>
         <Card>
           <p className="text-sm text-muted-foreground">High risk rate</p>

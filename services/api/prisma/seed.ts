@@ -6,6 +6,10 @@ import { featureVectorFromRow, generateFeaturesForDay } from '../src/modules/sco
 
 const prisma = new PrismaClient();
 const scoreBatchResponseSchema = z.array(scoreResponseSchema);
+const modelInfoSchema = z.object({
+  features: z.array(z.string()),
+  model_version: z.string(),
+});
 
 const MODELS = ['ST12000NM0008', 'WDC_WUH721414ALE6L4', 'TOSHIBA_MG07ACA14TA'];
 const DATACENTERS = ['us-east-1', 'us-west-2', 'eu-central-1'];
@@ -22,58 +26,16 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function bucketFromScore(score: number): RiskBucket {
-  if (score >= 0.75) {
-    return 'HIGH';
+function normalizeFeatures(
+  features: Record<string, number>,
+  expectedFeatureNames: string[],
+): Record<string, number | null> {
+  const normalized: Record<string, number | null> = {};
+  for (const name of expectedFeatureNames) {
+    const value = features[name];
+    normalized[name] = typeof value === 'number' && Number.isFinite(value) ? value : null;
   }
-
-  if (score >= 0.4) {
-    return 'MED';
-  }
-
-  return 'LOW';
-}
-
-function sigmoid(value: number): number {
-  return 1 / (1 + Math.exp(-value));
-}
-
-function fallbackScores(items: Array<{ drive_id: string; day: string; features: Record<string, number> }>) {
-  return items.map((item) => {
-    const features = item.features;
-    const linear =
-      0.015 * (features.age_days ?? 0) +
-      0.09 * (features.smart_5_mean_7d ?? 0) +
-      0.16 * (features.smart_197_mean_7d ?? 0) +
-      0.22 * (features.smart_197_max_30d ?? 0) +
-      0.11 * (features.smart_198_delta_7d ?? 0) +
-      0.07 * (features.write_latency_mean_7d ?? 0) +
-      0.3 * (features.missing_smart_197_30d ?? 0) -
-      3.2;
-
-    const riskScore = clamp(sigmoid(linear), 0, 1);
-    const topReasons = [
-      { code: 'smart_197_max_30d', contribution: Number((0.22 * (features.smart_197_max_30d ?? 0)).toFixed(6)), direction: 'UP' },
-      { code: 'smart_197_mean_7d', contribution: Number((0.16 * (features.smart_197_mean_7d ?? 0)).toFixed(6)), direction: 'UP' },
-      { code: 'smart_5_mean_7d', contribution: Number((0.09 * (features.smart_5_mean_7d ?? 0)).toFixed(6)), direction: 'UP' },
-      { code: 'age_days', contribution: Number((0.015 * (features.age_days ?? 0)).toFixed(6)), direction: 'UP' },
-      {
-        code: 'missing_smart_197_30d',
-        contribution: Number((0.3 * (features.missing_smart_197_30d ?? 0)).toFixed(6)),
-        direction: 'UP',
-      },
-    ];
-
-    return {
-      drive_id: item.drive_id,
-      day: item.day,
-      risk_score: riskScore,
-      risk_bucket: bucketFromScore(riskScore),
-      top_reasons: topReasons,
-      model_version: 'heuristic-seed-v1',
-      scored_at: new Date().toISOString(),
-    };
-  });
+  return normalized;
 }
 
 async function callModelScoreBatchWithRetry(
@@ -90,12 +52,18 @@ async function callModelScoreBatchWithRetry(
 
   for (let attempt = 1; attempt <= 8; attempt += 1) {
     try {
-      const response = await client.post('/score_batch', { items }, { headers });
+      const modelInfoResponse = await client.get('/model/info', { headers });
+      const modelInfo = modelInfoSchema.parse(modelInfoResponse.data);
+      const normalizedItems = items.map((item) => ({
+        ...item,
+        features: normalizeFeatures(item.features, modelInfo.features),
+      }));
+
+      const response = await client.post('/score_batch', { items: normalizedItems }, { headers });
       return scoreBatchResponseSchema.parse(response.data);
     } catch (error) {
       if (attempt === 8) {
-        console.warn(`Model service unavailable after retries, using fallback heuristic scoring: ${String(error)}`);
-        return fallbackScores(items);
+        throw new Error(`Model service unavailable after retries: ${String(error)}`);
       }
 
       await new Promise((resolve) => {
@@ -104,7 +72,7 @@ async function callModelScoreBatchWithRetry(
     }
   }
 
-  return fallbackScores(items);
+  throw new Error('Model service scoring failed unexpectedly');
 }
 
 async function seedDrivesAndTelemetry(latestDay: Date) {

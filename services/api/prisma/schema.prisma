@@ -114,7 +114,7 @@ model ModelRegistry {
   featureSchema     Json     @map("feature_schema")
   trainedDataWindow Json     @map("trained_data_window")
   trainDate         DateTime @map("train_date")
-  horizonDays       Int      @default(14) @map("horizon_days")
+  horizonDays       Int      @default(30) @map("horizon_days")
   status            String   @default("active")
   createdAt         DateTime @default(now()) @map("created_at")
 

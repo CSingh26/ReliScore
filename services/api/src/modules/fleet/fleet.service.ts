@@ -14,7 +14,7 @@ export class FleetService {
       ? { day: summaryDay }
       : {};
 
-    const [drivesScoredToday, predictedFailures14d, buckets] = await Promise.all([
+    const [drivesScoredToday, predictedFailures30d, buckets] = await Promise.all([
       this.prisma.prediction.count({ where: predictionsWhere }),
       this.prisma.prediction.count({
         where: {
@@ -45,7 +45,7 @@ export class FleetService {
       day: summaryDay ? summaryDay.toISOString().slice(0, 10) : null,
       totalDrives,
       drivesScoredToday,
-      predictedFailures14d,
+      predictedFailures30d,
       riskDistribution,
     };
   }

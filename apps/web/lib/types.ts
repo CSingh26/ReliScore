@@ -2,7 +2,7 @@ export interface FleetSummary {
   day: string | null;
   totalDrives: number;
   drivesScoredToday: number;
-  predictedFailures14d: number;
+  predictedFailures30d: number;
   riskDistribution: {
     LOW: number;
     MED: number;
