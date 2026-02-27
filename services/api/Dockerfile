@@ -20,4 +20,4 @@ RUN pnpm --filter @reliscore/api build
 
 WORKDIR /workspace/services/api
 EXPOSE 4000
-CMD ["./scripts/start.sh"]
+CMD ["sh", "-c", "pnpm prisma db push && node dist/main.js"]
