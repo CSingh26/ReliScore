@@ -24,6 +24,62 @@ jobs:
       - name: Install dependencies
         run: pip install -r services/model/requirements.txt
 
+      - name: Bootstrap model artifacts for tests
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          import joblib
+          import numpy as np
+          from sklearn.dummy import DummyClassifier
+
+          artifacts_root = Path("services/model/artifacts")
+          version_dir = artifacts_root / "ci-smoke-v1"
+          version_dir.mkdir(parents=True, exist_ok=True)
+
+          feature_columns = ["f_temp", "f_vibration", "f_power"]
+
+          model = DummyClassifier(strategy="prior")
+          model.fit(np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]), np.array([0, 1]))
+
+          bundle = {
+              "model": model,
+              "scaler": None,
+              "model_type": "DummyClassifier",
+              "feature_columns": feature_columns,
+              "fill_values": {name: 0.0 for name in feature_columns},
+              "feature_weights": {
+                  "f_temp": 0.3,
+                  "f_vibration": 0.5,
+                  "f_power": 0.2,
+              },
+              "horizon_days": 30,
+          }
+          joblib.dump(bundle, version_dir / "model.joblib")
+
+          (version_dir / "feature_schema.json").write_text(
+              json.dumps(
+                  {
+                      "ordered_features": [
+                          {"name": "f_temp"},
+                          {"name": "f_vibration"},
+                          {"name": "f_power"},
+                      ]
+                  }
+              ),
+              encoding="utf-8",
+          )
+          (version_dir / "version.json").write_text(
+              json.dumps({"model_version": "ci-smoke-v1", "horizon_days": 30}),
+              encoding="utf-8",
+          )
+          (version_dir / "metrics.json").write_text(
+              json.dumps({"roc_auc": 0.5}),
+              encoding="utf-8",
+          )
+          PY
+
       - name: Pytest
         run: pytest services/model/tests
 
