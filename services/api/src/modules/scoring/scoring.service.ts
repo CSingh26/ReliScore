@@ -57,7 +57,8 @@ export class ScoringService {
     }));
 
     const scores = await this.modelClient.scoreBatch(batchItems);
-    const { scored, bucketMode } = this.applyOperationalBuckets(scores);
+    const scored = scores;
+    const bucketMode = 'model' as const;
 
     await this.prisma.$transaction(
       scored.map((score) =>
@@ -119,54 +120,6 @@ export class ScoringService {
     };
   }
 
-  private applyOperationalBuckets<T extends { drive_id: string; risk_score: number; risk_bucket: string }>(
-    scores: T[],
-  ): { scored: T[]; bucketMode: 'model' | 'rank_fallback' } {
-    if (scores.length === 0) {
-      return { scored: [], bucketMode: 'model' };
-    }
-
-    const hasMediumOrHigh = scores.some((item) => item.risk_bucket === 'MED' || item.risk_bucket === 'HIGH');
-    if (hasMediumOrHigh) {
-      return { scored: scores, bucketMode: 'model' };
-    }
-
-    const ordered = [...scores].sort((a, b) => {
-      if (b.risk_score !== a.risk_score) {
-        return b.risk_score - a.risk_score;
-      }
-      return a.drive_id.localeCompare(b.drive_id);
-    });
-
-    const total = ordered.length;
-    const highCount = total >= 20 ? Math.ceil(total * 0.05) : Math.min(1, total);
-    const medCount =
-      total >= 10 ? Math.ceil(total * 0.15) : Math.min(1, Math.max(0, total - highCount));
-
-    const nextScores = ordered.map((item, index) => {
-      let riskBucket: RiskBucket = 'LOW';
-      let bucketPosition = 0;
-      let bucketSize = Math.max(1, total - highCount - medCount);
-      if (index < highCount) {
-        riskBucket = 'HIGH';
-        bucketPosition = index;
-        bucketSize = highCount;
-      } else if (index < highCount + medCount) {
-        riskBucket = 'MED';
-        bucketPosition = index - highCount;
-        bucketSize = medCount;
-      }
-
-      return {
-        ...item,
-        risk_score: this.operationalScoreForBucket(riskBucket, bucketPosition, bucketSize),
-        risk_bucket: riskBucket,
-      };
-    });
-
-    return { scored: nextScores, bucketMode: 'rank_fallback' };
-  }
-
   private bucketDistribution(buckets: RiskBucket[]) {
     const distribution: Record<RiskBucket, number> = {
       LOW: 0,
@@ -179,27 +132,6 @@ export class ScoringService {
     }
 
     return distribution;
-  }
-
-  private operationalScoreForBucket(
-    bucket: RiskBucket,
-    bucketPosition: number,
-    bucketSize: number,
-  ): number {
-    const clampedSize = Math.max(1, bucketSize);
-    const t = clampedSize === 1 ? 0.5 : bucketPosition / (clampedSize - 1);
-
-    let max = 0.39;
-    let min = 0.02;
-    if (bucket === 'HIGH') {
-      max = 0.95;
-      min = 0.75;
-    } else if (bucket === 'MED') {
-      max = 0.74;
-      min = 0.4;
-    }
-
-    return Number((max - (max - min) * t).toFixed(6));
   }
 
   private async resolveLatestTelemetryDay(): Promise<Date | null> {

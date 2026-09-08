@@ -75,3 +75,15 @@ def test_score_batch_rejects_schema_mismatch() -> None:
 
     assert response.status_code == 422
     assert "Feature schema mismatch" in response.text
+
+
+def test_missing_artifact_exposes_unavailable_instead_of_fabricated_score(monkeypatch, tmp_path):
+    monkeypatch.setenv('MODEL_ARTIFACTS_ROOT', str(tmp_path))
+    monkeypatch.setenv('MODEL_VERSION', 'missing')
+    client = TestClient(create_app())
+    health = client.get('/health')
+    assert health.status_code == 200
+    assert health.json()['model_loaded'] is False
+    assert health.json()['status'] == 'unavailable'
+    assert client.get('/model/info').status_code == 503
+    assert client.post('/score', json={'drive_id': 'd1', 'day': '2026-01-01', 'features': {'temperature': 12.}}).status_code == 503

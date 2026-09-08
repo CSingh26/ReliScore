@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from enum import Enum
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class SchemaModel(BaseModel):
-    model_config = ConfigDict(protected_namespaces=())
+    model_config = ConfigDict(protected_namespaces=(), extra="forbid", allow_inf_nan=False)
 
 
 class RiskBucket(str, Enum):
@@ -17,15 +18,15 @@ class RiskBucket(str, Enum):
 
 
 class ScoreRequest(SchemaModel):
-    drive_id: str
+    drive_id: str = Field(min_length=1, max_length=128, pattern=r"^\S+$")
     day: date
-    features: dict[str, float | None]
+    features: dict[Annotated[str, Field(min_length=1, max_length=128)], Annotated[float, Field(strict=True, allow_inf_nan=False)] | None] = Field(min_length=1, max_length=256)
 
 
 class ReasonCode(SchemaModel):
     code: str
     contribution: float
-    direction: str
+    direction: Literal["UP", "DOWN"]
 
 
 class ScoreResponse(SchemaModel):
@@ -39,7 +40,7 @@ class ScoreResponse(SchemaModel):
 
 
 class BatchScoreRequest(SchemaModel):
-    items: list[ScoreRequest]
+    items: list[ScoreRequest] = Field(min_length=1, max_length=1000)
 
 
 class HealthResponse(SchemaModel):
@@ -54,3 +55,5 @@ class ModelInfoResponse(SchemaModel):
     horizon_days: int
     features: list[str]
     metrics: dict[str, float | list[dict[str, float]] | str]
+    provenance: dict = Field(default_factory=dict)
+    explanation_method: str = "unavailable"

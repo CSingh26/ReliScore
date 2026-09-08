@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
 
@@ -32,6 +34,13 @@ class LoadedModel:
     horizon_days: int
     model_version: str
     metrics: dict[str, float | list[dict[str, float]] | str]
+    provenance: dict = field(default_factory=dict)
+
+    @property
+    def explanation_method(self) -> str:
+        from sklearn.linear_model import LogisticRegression, SGDClassifier
+        supported = isinstance(self.model, LogisticRegression) or (isinstance(self.model, SGDClassifier) and self.model.loss == "log_loss")
+        return "linear_log_odds" if supported and getattr(self.model, "coef_", np.empty((0,))).shape == (1, len(self.feature_columns)) else "unavailable"
 
 
 class ModelStore:
@@ -56,6 +65,11 @@ class ModelStore:
             horizon_days = int(version_meta.get("horizon_days", bundle.get("horizon_days", 30)))
             model_version = str(version_meta.get("model_version", version))
 
+            fills = bundle.get("fill_values", {})
+            if set(fills) != set(feature_columns) or any(not isinstance(v, (int, float)) or isinstance(v, bool) or not math.isfinite(v) for v in fills.values()):
+                raise ValueError("Artifact fill_values must contain one finite training-time fill per feature")
+            if horizon_days <= 0 or model_version != version:
+                raise ValueError("Artifact version/horizon metadata is inconsistent")
             self.loaded = LoadedModel(
                 model=bundle["model"],
                 scaler=bundle.get("scaler"),
@@ -72,6 +86,7 @@ class ModelStore:
                 horizon_days=horizon_days,
                 model_version=model_version,
                 metrics=metrics,
+                provenance={**version_meta, "artifact_sha256": hashlib.sha256((artifact_dir / "model.joblib").read_bytes()).hexdigest()},
             )
             return self.loaded
 
@@ -99,9 +114,15 @@ class ModelStore:
         for feature in self.loaded.feature_columns:
             raw_value = features.get(feature)
             if raw_value is None:
-                row[feature] = self.loaded.fill_values.get(feature, 0.0)
+                if feature not in self.loaded.fill_values:
+                    raise ValueError(f"Missing training-time fill for {feature}")
+                row[feature] = self.loaded.fill_values[feature]
             else:
+                if isinstance(raw_value, bool) or not isinstance(raw_value, (float, int)):
+                    raise ValueError("Feature values must be finite numbers or null")
                 row[feature] = float(raw_value)
+            if not math.isfinite(row[feature]):
+                raise ValueError("Feature values and fills must be finite")
 
         frame = pd.DataFrame([row], columns=self.loaded.feature_columns)
         model_input = frame
@@ -109,18 +130,27 @@ class ModelStore:
             scaled = self.loaded.scaler.transform(frame.to_numpy(dtype=np.float64))
             model_input = pd.DataFrame(scaled, columns=self.loaded.feature_columns)
 
-        probabilities = self.loaded.model.predict_proba(model_input)
-        risk_score = float(probabilities[:, 1][0]) if probabilities.ndim > 1 else float(probabilities[0])
+        if not np.isfinite(model_input.to_numpy()).all():
+            raise ValueError("Transformed features must be finite")
+        classes = list(self.loaded.model.classes_)
+        if len(classes) != 2 or set(classes) != {0, 1}:
+            raise ValueError("Model must identify binary failure class 1")
+        predict_input = model_input if hasattr(self.loaded.model, "feature_names_in_") else model_input.to_numpy()
+        probabilities = np.asarray(self.loaded.model.predict_proba(predict_input))
+        if probabilities.shape != (1, 2) or not np.isfinite(probabilities).all() or (probabilities < 0).any() or (probabilities > 1).any() or not np.isclose(probabilities.sum(), 1):
+            raise ValueError("Model returned invalid probabilities")
+        risk_score = float(probabilities[0, classes.index(1)])
 
         reasons: list[ReasonCode] = []
-        for feature_name in self.loaded.feature_columns:
-            value = float(row[feature_name])
-            weight = float(self.loaded.feature_weights.get(feature_name, 0.0))
-            contribution = float(weight * value)
-            direction = "UP" if contribution >= 0 else "DOWN"
-            reasons.append(
-                ReasonCode(code=feature_name, contribution=round(contribution, 6), direction=direction)
-            )
+        if self.loaded.explanation_method == "linear_log_odds":
+            # The coefficients act on transformed features; these are log-odds
+            # contributions, not probabilities, causal effects, or SHAP values.
+            coefficients = self.loaded.model.coef_[0]
+            for index, feature_name in enumerate(self.loaded.feature_columns):
+                contribution = float(coefficients[index] * model_input.iloc[0, index])
+                if not math.isfinite(contribution):
+                    raise ValueError("Model returned nonfinite explanations")
+                reasons.append(ReasonCode(code=feature_name, contribution=round(contribution, 6), direction="UP" if contribution >= 0 else "DOWN"))
 
         top_reasons = sorted(reasons, key=lambda item: abs(item.contribution), reverse=True)[:5]
         return risk_score, _risk_bucket(risk_score), top_reasons
@@ -169,17 +199,13 @@ class ModelStore:
 
     @staticmethod
     def _resolve_feature_columns(bundle: dict, feature_schema: dict) -> list[str]:
-        ordered_features = feature_schema.get("ordered_features")
-        if isinstance(ordered_features, list) and ordered_features:
-            columns = [str(item.get("name")) for item in ordered_features if isinstance(item, dict)]
-            if columns and all(columns):
-                return columns
-
-        bundle_features = bundle.get("feature_columns")
-        if isinstance(bundle_features, list) and bundle_features:
-            return [str(name) for name in bundle_features]
-
-        raise ValueError("Unable to resolve feature columns from feature_schema.json or model bundle")
+        ordered = feature_schema.get("ordered_features")
+        columns = [item.get("name") for item in ordered] if isinstance(ordered, list) and all(isinstance(item, dict) for item in ordered) else []
+        if not columns or any(not isinstance(name, str) or not name for name in columns) or len(set(columns)) != len(columns):
+            raise ValueError("Artifact requires unique ordered feature names")
+        if bundle.get("feature_columns") != columns:
+            raise ValueError("Artifact feature schema disagrees with model bundle order")
+        return columns
 
     @staticmethod
     def _load_json(path: Path, default: dict) -> dict:

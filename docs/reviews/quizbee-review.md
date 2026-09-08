@@ -18,3 +18,7 @@ Room lifecycle copy/delete transitions remain non-transactional, and cross-colle
 ## Portfolio lens
 
 README states a clear CS problem and connects invariants to actual test evidence within 90 seconds. Finance functionality would be artificial here. The project's value is authorization, transaction boundaries, deterministic grading and distributed-time consistency. Resolve the two timing defects before calling this release complete.
+
+## Closure review
+
+Re-reviewed `e90196b59dcbdc4534acf260405ac7deeba36a8b`: both P2 findings are closed. Strict interval validation occurs before database work; immediate activation sets actual server start, refuses expired ends and atomically moves the room. Independently ran all three new room tests: 3 passed. No remaining release-blocking issue identified in this bounded review.
