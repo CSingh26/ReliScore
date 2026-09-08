@@ -16,9 +16,9 @@ export function TelemetryChart({
           <YAxis yAxisId="smart" tickLine={false} axisLine={false} />
           <YAxis yAxisId="temp" orientation="right" tickLine={false} axisLine={false} />
           <Tooltip />
-          <Line yAxisId="smart" type="monotone" dataKey="smart197" name="SMART 197" stroke="#b6552f" dot={false} strokeWidth={2.4} />
-          <Line yAxisId="smart" type="monotone" dataKey="smart5" name="SMART 5" stroke="#705f4f" dot={false} strokeWidth={2} />
-          <Line yAxisId="temp" type="monotone" dataKey="temperature" name="Temperature" stroke="#2f6f79" dot={false} strokeWidth={1.8} />
+          <Line isAnimationActive={false} yAxisId="smart" type="monotone" dataKey="smart197" name="SMART 197" stroke="#b6552f" dot={false} strokeWidth={2.4} />
+          <Line isAnimationActive={false} yAxisId="smart" type="monotone" dataKey="smart5" name="SMART 5" stroke="#705f4f" dot={false} strokeWidth={2} />
+          <Line isAnimationActive={false} yAxisId="temp" type="monotone" dataKey="temperature" name="Temperature" stroke="#2f6f79" dot={false} strokeWidth={1.8} />
         </LineChart>
       </ResponsiveContainer>
     </div>

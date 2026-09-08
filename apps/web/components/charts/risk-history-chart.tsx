@@ -15,7 +15,7 @@ export function RiskHistoryChart({
           <XAxis dataKey="day" tickLine={false} axisLine={false} minTickGap={22} />
           <YAxis domain={[0, 1]} tickLine={false} axisLine={false} />
           <Tooltip />
-          <Line type="monotone" dataKey="riskScore" stroke="#c55135" strokeWidth={2.5} dot={false} />
+          <Line isAnimationActive={false} type="monotone" dataKey="riskScore" stroke="#c55135" strokeWidth={2.5} dot={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>

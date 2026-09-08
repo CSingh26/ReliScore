@@ -13,8 +13,6 @@ test('actual API fixture shows honest fleet counts and model provenance', async 
   await expect(page.getByRole('heading',{name:'Top Reason Codes'})).toBeVisible();
   await expect(page.getByText(/Largest linear log-odds terms/)).toBeVisible();
   await expect(page.locator('body')).not.toContainText('obsolete-synthetic-fixture');
-  // Let the chart's entrance animation complete before recording visual evidence.
-  await page.waitForTimeout(2000);
   if(testInfo.project.name==='desktop') await page.screenshot({path:'../../docs/media/current/synthetic-drive.png',fullPage:true});
 });
 
