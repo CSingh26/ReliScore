@@ -49,6 +49,8 @@ def build_features(
     horizon_days: int,
     row_limit: int | None,
 ) -> None:
+    if horizon_days != 30:
+        raise ValueError("The label_30d contract requires horizon_days=30")
     if not warehouse_dir.exists():
         raise FileNotFoundError(f"Warehouse not found: {warehouse_dir}")
 
@@ -86,6 +88,7 @@ def build_features(
             SELECT
               *,
               MIN(as_of_date) OVER (PARTITION BY serial_number) AS first_seen_date,
+              MAX(as_of_date) OVER (PARTITION BY serial_number) AS last_seen_date,
               MIN(CASE WHEN failure = 1 THEN as_of_date END)
                 OVER (PARTITION BY serial_number) AS failure_date,
               {feature_exprs}
@@ -104,7 +107,8 @@ def build_features(
                 WHEN failure_date > as_of_date
                   AND failure_date <= as_of_date + INTERVAL '{horizon_days} day'
                 THEN 1
-                ELSE 0
+                WHEN last_seen_date >= as_of_date + INTERVAL '{horizon_days} day' THEN 0
+                ELSE NULL
               END AS label_30d,
               {', '.join([f'{column}_mean_7d' for column in SMART_FEATURE_COLUMNS])},
               {', '.join([f'{column}_mean_30d' for column in SMART_FEATURE_COLUMNS])},
@@ -115,6 +119,7 @@ def build_features(
               LPAD(CAST(EXTRACT(MONTH FROM as_of_date) AS VARCHAR), 2, '0') AS month
             FROM enriched
             WHERE as_of_date IS NOT NULL
+              AND (failure_date IS NULL OR as_of_date < failure_date)
           )
           SELECT * FROM final
           {limit_clause}

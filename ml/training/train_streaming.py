@@ -49,6 +49,7 @@ class DatasetSplit:
     min_date: datetime
     max_date: datetime
     cutoff_date: datetime
+    train_end_date: datetime
 
 
 def _sha256(path: Path) -> str:
@@ -91,6 +92,7 @@ def resolve_split(
     conn: duckdb.DuckDBPyConnection,
     feature_glob: str,
     test_months: int,
+    horizon_days: int = 30,
 ) -> DatasetSplit:
     min_date, max_date = conn.execute(
         "SELECT MIN(as_of_date), MAX(as_of_date) FROM read_parquet(?, union_by_name=true)",
@@ -112,6 +114,7 @@ def resolve_split(
         min_date=_as_datetime(min_ts),
         max_date=_as_datetime(max_ts),
         cutoff_date=_as_datetime(candidate_cutoff),
+        train_end_date=_as_datetime(candidate_cutoff - pd.Timedelta(days=horizon_days)),
     )
 
 
@@ -134,11 +137,12 @@ def iter_batches(
       FROM read_parquet(?, union_by_name=true)
       WHERE as_of_date {comparator} ?
         AND label_30d IS NOT NULL
+      ORDER BY as_of_date
     """
 
     reader = conn.execute(
         query,
-        [feature_glob, split.cutoff_date.date()],
+        [feature_glob, (split.train_end_date if mode == "train" else split.cutoff_date).date()],
     ).fetch_record_batch(rows_per_batch=batch_size)
 
     yielded = 0
@@ -203,11 +207,15 @@ def train_streaming(
     max_train_batches: int | None,
     max_test_batches: int | None,
 ) -> Path:
+    if horizon_days != 30:
+        raise ValueError("The label_30d feature contract requires horizon_days=30")
+    if batch_size < 1 or test_months < 1 or any(value is not None and value < 1 for value in (max_train_batches, max_test_batches)):
+        raise ValueError("Batch limits and test months must be positive")
     feature_glob = str(features_dir / "**" / "*.parquet")
     conn = duckdb.connect(database=":memory:")
 
     numeric_features = discover_numeric_features(conn, feature_glob)
-    split = resolve_split(conn, feature_glob, test_months=test_months)
+    split = resolve_split(conn, feature_glob, test_months=test_months, horizon_days=horizon_days)
 
     scaler = StandardScaler(with_mean=True, with_std=True)
     class_counts = {0: 0, 1: 0}
@@ -291,31 +299,17 @@ def train_streaming(
         score_chunks.append(scores)
 
     if not y_true_chunks:
-        # Smoke runs with tiny row limits can collapse the test window. Fall back to
-        # evaluating on a small train sample so end-to-end health checks still pass.
-        for batch in iter_batches(
-            conn,
-            feature_glob,
-            numeric_features,
-            split,
-            mode="train",
-            batch_size=batch_size,
-            max_batches=max_test_batches or 1,
-        ):
-            x = batch[numeric_features].replace([np.inf, -np.inf], np.nan).fillna(0.0).to_numpy(dtype=np.float64)
-            y = batch["label_30d"].astype(int).to_numpy()
-            x_scaled = scaler.transform(x)
-            scores = classifier.predict_proba(x_scaled)[:, 1]
-            y_true_chunks.append(y)
-            score_chunks.append(scores)
-
-    if not y_true_chunks:
-        raise RuntimeError("No rows available for evaluation. Check features dataset generation.")
+        raise RuntimeError("No chronological holdout rows; training rows must never substitute for evaluation")
 
     y_true = np.concatenate(y_true_chunks)
     y_scores = np.concatenate(score_chunks)
 
+    baseline_scores = np.full(len(y_true), class_counts[1] / total_train)
     metrics = {
+        "evaluation_scope": "chronological_holdout",
+        "baseline_brier_score": float(brier_score_loss(y_true, baseline_scores)),
+        "baseline_pr_auc": float(y_true.mean()),
+        "train_rows": total_train,
         "pr_auc": float(average_precision_score(y_true, y_scores)),
         "brier_score": float(brier_score_loss(y_true, y_scores)),
         "recall_at_top_1pct": _recall_at_top_fraction(y_true, y_scores, 0.01),
@@ -325,14 +319,12 @@ def train_streaming(
         "calibration": _calibration_bins(y_true, y_scores, bins=10),
     }
 
-    model_version = f"backblaze_h30_all_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M')}"
+    model_version = f"telemetry_h30_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}"
     artifact_dir = artifacts_root / model_version
-    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_dir.mkdir(parents=True, exist_ok=False)
 
-    fill_values = {
-        feature: float(value)
-        for feature, value in zip(numeric_features, scaler.mean_, strict=True)
-    }
+    # Identical to the missing-value preprocessing used in both training passes.
+    fill_values = {feature: 0.0 for feature in numeric_features}
     feature_weights = {
         feature: float(value)
         for feature, value in zip(numeric_features, classifier.coef_[0], strict=True)
@@ -367,23 +359,33 @@ def train_streaming(
         "train_date": datetime.now(timezone.utc).isoformat(),
         "train_range": {
             "start": split.min_date.date().isoformat(),
-            "end": split.cutoff_date.date().isoformat(),
+            "end": split.train_end_date.date().isoformat(),
         },
         "test_range": {
-            "start": split.cutoff_date.date().isoformat(),
+            "start": (split.cutoff_date + pd.Timedelta(days=1)).date().isoformat(),
             "end": split.max_date.date().isoformat(),
         },
         "dataset_manifest_hash": _sha256(manifest_path),
+        "data_source": json.loads(manifest_path.read_text()).get("source", "user-provided feature parquet") if manifest_path.exists() else "user-provided feature parquet; manifest unavailable",
+        "imputation": "constant_zero_before_scaling",
+        "purge_days": horizon_days,
+        "evaluation_scope": "chronological_holdout",
+        "max_train_batches": max_train_batches,
+        "max_test_batches": max_test_batches,
+        "probability_calibration": "not calibrated; class-balanced logistic score",
+
     }
     (artifact_dir / "version.json").write_text(json.dumps(version_meta, indent=2), encoding="utf-8")
 
     model_card = f"""# Model Card - {model_version}
 
 ## Summary
-Incremental logistic model trained on full Backblaze drive telemetry with a **{horizon_days}-day** failure horizon.
+Incremental logistic model trained on supplied telemetry feature parquet with a **{horizon_days}-day** failure horizon.
 
 ## Training Data
-- Source: Backblaze Drive Stats full manifest
+- Source: {version_meta["data_source"]}
+- Manifest SHA-256: {version_meta["dataset_manifest_hash"]}
+- Training/evaluation batch limits: {max_train_batches} / {max_test_batches}
 - Train range: {version_meta['train_range']['start']} to {version_meta['train_range']['end']}
 - Test range: {version_meta['test_range']['start']} to {version_meta['test_range']['end']}
 
@@ -394,7 +396,9 @@ Incremental logistic model trained on full Backblaze drive telemetry with a **{h
 - Brier score: {metrics['brier_score']:.4f}
 
 ## Notes
-- Time-based split to prevent leakage.
+- Chronological split with {horizon_days}-day purge; no training-data evaluation fallback.
+- Scores use class-balanced training and are not calibrated fleet failure probabilities.
+- A shared drive can appear in both periods; this is temporal generalization, not unseen-device evaluation.
 - Incremental fitting enables full-dataset training without loading all rows into memory.
 - Feature validation enforced in model service through exported schema.
 """
