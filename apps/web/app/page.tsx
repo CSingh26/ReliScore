@@ -8,7 +8,7 @@ import { RiskDistributionChart } from '@/components/charts/risk-distribution-cha
 
 function formatPercent(value: number | undefined) {
   if (typeof value !== 'number') {
-    return '0%';
+    return 'Unavailable';
   }
 
   return `${(value * 100).toFixed(1)}%`;
@@ -40,7 +40,8 @@ export default async function HomePage() {
       <section className="space-y-1">
         <p className="text-sm font-medium text-muted-foreground">Fleet snapshot</p>
         <h2 className="text-2xl font-semibold tracking-tight">Overview</h2>
-        <p className="text-sm text-muted-foreground">Latest scoring day: {summary.day ?? 'n/a'}</p>
+        <p className="text-sm text-muted-foreground">Latest scoring day: {summary.day ?? 'not scored'}</p>
+        <p className="max-w-3xl text-sm text-muted-foreground">Scores prioritize investigation. High-risk counts are threshold flags, not expected failures. Class-balanced model scores require fleet-specific calibration before probability interpretation.</p>
       </section>
 
       <section className="grid gap-4 md:grid-cols-4">
@@ -53,7 +54,7 @@ export default async function HomePage() {
           <p className="mt-2 text-2xl font-semibold">{summary.drivesScoredToday.toLocaleString()}</p>
         </Card>
         <Card>
-          <p className="text-sm text-muted-foreground">Predicted failures (30d)</p>
+          <p className="text-sm text-muted-foreground">High-risk drives</p>
           <p className="mt-2 text-2xl font-semibold">{summary.predictedFailures30d.toLocaleString()}</p>
         </Card>
         <Card>

@@ -1,0 +1,64 @@
+name: Quality
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  full-stack:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: reliscore
+          POSTGRES_PASSWORD: reliscore
+          POSTGRES_DB: reliscore_portfolio_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U reliscore -d reliscore_portfolio_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://reliscore:reliscore@localhost:5432/reliscore_portfolio_test
+      MODEL_SERVICE_URL: http://127.0.0.1:8041
+      MODEL_ARTIFACTS_ROOT: /tmp/reliscore-integration-artifacts
+      MODEL_VERSION: synthetic-software-fixture-v1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pnpm install --frozen-lockfile
+      - run: pip install -r requirements-lock.txt
+      - run: pnpm --filter @reliscore/shared build && pnpm --filter @reliscore/api prisma:generate
+      - run: pnpm lint && pnpm typecheck && pnpm test && pnpm build
+      - run: ruff check services/model/app ml/training --select E9,F63,F7,F82
+      - run: python -m compileall -q services/model/app ml/training && pytest services/model/tests -q
+      - run: pnpm audit && pip-audit -r services/model/requirements.txt && pip-audit -r ml/training/requirements.txt
+      - name: Real PostgreSQL and HTTP model integration
+        run: |
+          pnpm --filter @reliscore/api exec prisma db push
+          python tests/create_model_fixture.py
+          uvicorn app.main:app --app-dir services/model --host 127.0.0.1 --port 8041 >/tmp/reliscore-model.log 2>&1 &
+          MODEL_PID=$!
+          trap 'kill "$MODEL_PID"' EXIT
+          for attempt in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8041/model/info >/dev/null && break
+            sleep 1
+          done
+          KEEP_SYNTHETIC_FIXTURE=true pnpm --filter @reliscore/api exec tsx test/persistence.integration.ts
+          API_PORT=4041 pnpm --filter @reliscore/api start >/tmp/reliscore-api.log 2>&1 &
+          API_PID=$!
+          trap 'kill "$MODEL_PID" "$API_PID"' EXIT
+          for attempt in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:4041/api/v1/health >/dev/null && break
+            sleep 1
+          done
+          pnpm --filter @reliscore/web exec playwright install --with-deps chromium
+          pnpm --filter @reliscore/web test:e2e
+      - name: Tracked secret-pattern scan
+        run: python tests/scan_secrets.py

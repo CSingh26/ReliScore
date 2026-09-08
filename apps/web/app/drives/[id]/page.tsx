@@ -31,8 +31,8 @@ export default async function DriveDetailPage({ params }: { params: Promise<{ id
           </p>
         </div>
 
-        <Badge className={riskBadgeClass(response.riskHistory.at(-1)?.riskBucket ?? 'LOW')}>
-          {response.riskHistory.at(-1)?.riskBucket ?? 'LOW'} Risk
+        <Badge className={riskBadgeClass(response.riskHistory.at(-1)?.riskBucket ?? 'UNSCORED')}>
+          {response.riskHistory.at(-1)?.riskBucket ?? 'UNSCORED'} Risk
         </Badge>
       </section>
 
@@ -89,7 +89,7 @@ export default async function DriveDetailPage({ params }: { params: Promise<{ id
 
       <Card>
         <h3 className="text-base font-semibold">Top Reason Codes</h3>
-        <p className="mt-1 text-sm text-muted-foreground">Feature contributions from latest score</p>
+        <p className="mt-1 text-sm text-muted-foreground">Largest linear log-odds terms from transformed features; not causal effects or probability changes.</p>
 
         {!response.topReasons.length ? (
           <p className="mt-4 text-sm text-muted-foreground">No explanation payload available.</p>
@@ -113,7 +113,7 @@ export default async function DriveDetailPage({ params }: { params: Promise<{ id
                   </Badge>
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Contribution: {Number(reason.contribution).toFixed(4)}
+                  Log-odds term: {Number(reason.contribution).toFixed(4)}
                 </p>
               </div>
             ))}

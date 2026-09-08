@@ -7,3 +7,8 @@ node_modules
 **/coverage
 ml/training/data
 docs/_private
+
+.venv
+data
+.env
+**/.env

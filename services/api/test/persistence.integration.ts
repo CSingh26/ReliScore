@@ -15,7 +15,7 @@ async function main() {
   try {
     await db.drive.deleteMany({where:{driveId:{in:ids}}});
     for (const [index,driveId] of ids.entries()) {
-      await db.drive.create({data:{driveId,model:'SYNTHETIC SOFTWARE FIXTURE',datacenter:'Isolated test database',capacityBytes:1000n,firstSeen:new Date('2025-01-01'),lastSeen:target}});
+      await db.drive.create({data:{driveId,model:'SYNTHETIC SOFTWARE FIXTURE',datacenter:'Isolated test database',capacityBytes:1_000_000_000_000n,firstSeen:new Date('2025-01-01'),lastSeen:target}});
       const rows = Array.from({length:40},(_,i)=>({driveId,day:new Date(target.getTime()-(39-i)*86400000),smart5:index*10,smart197:index*5,temperature:30+index,isFailedToday:driveId.endsWith('failed')&&i===39}));
       await db.telemetryDaily.createMany({data:driveId.endsWith('stale')?rows.slice(0,-1):rows});
     }

@@ -41,12 +41,8 @@ train-h30-all:
 	python3 ml/training/train_streaming.py --features data/backblaze/features_h30 --horizon-days 30
 
 train-smoke:
-	python3 -m pip install -r ml/training/requirements.txt
-	python3 ml/training/backblaze_manifest.py --out data/backblaze/manifest.json --include_year_from 2023
-	python3 ml/training/download_backblaze.py --manifest data/backblaze/manifest.json --dest data/backblaze/zips --max_files 1
-	python3 ml/training/build_warehouse.py --zips data/backblaze/zips --out data/backblaze/warehouse --max_csv_files 2 --clean
-	python3 ml/training/build_features.py --warehouse data/backblaze/warehouse --out data/backblaze/features_h30 --horizon-days 30 --row-limit 200000 --clean
-	python3 ml/training/train_streaming.py --features data/backblaze/features_h30 --horizon-days 30 --batch-size 50000 --test-months 6 --max-train-batches 6 --max-test-batches 2
+	python3 -m pip install -r services/model/requirements.txt -r ml/training/requirements.txt
+	python3 -m pytest services/model/tests/test_training.py -q
 
 backfill-fleet:
 	docker run --rm --network reliscore_default \

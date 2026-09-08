@@ -1,15 +1,15 @@
-FROM node:20-alpine
+FROM node:22-alpine
 
 RUN apk add --no-cache curl
 RUN corepack enable
 
 WORKDIR /workspace
 
-COPY package.json pnpm-workspace.yaml tsconfig.base.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/package.json
 COPY services/api/package.json services/api/package.json
 
-RUN pnpm install --filter @reliscore/shared --filter @reliscore/api --no-frozen-lockfile
+RUN pnpm install --filter @reliscore/shared --filter @reliscore/api --frozen-lockfile
 
 COPY packages/shared packages/shared
 COPY services/api services/api

@@ -1,14 +1,14 @@
-FROM node:20-alpine
+FROM node:22-alpine
 
 RUN corepack enable
 
 WORKDIR /workspace
 
-COPY package.json pnpm-workspace.yaml tsconfig.base.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/package.json
 COPY apps/web/package.json apps/web/package.json
 
-RUN pnpm install --filter @reliscore/shared --filter @reliscore/web --no-frozen-lockfile
+RUN pnpm install --filter @reliscore/shared --filter @reliscore/web --frozen-lockfile
 
 COPY packages/shared packages/shared
 COPY apps/web apps/web

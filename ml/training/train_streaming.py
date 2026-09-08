@@ -386,8 +386,8 @@ Incremental logistic model trained on supplied telemetry feature parquet with a 
 - Source: {version_meta["data_source"]}
 - Manifest SHA-256: {version_meta["dataset_manifest_hash"]}
 - Training/evaluation batch limits: {max_train_batches} / {max_test_batches}
-- Train range: {version_meta['train_range']['start']} to {version_meta['train_range']['end']}
-- Test range: {version_meta['test_range']['start']} to {version_meta['test_range']['end']}
+- Eligible train range: {version_meta['train_range']['start']} to {version_meta['train_range']['end']}
+- Eligible test range: {version_meta['test_range']['start']} to {version_meta['test_range']['end']}
 
 ## Evaluation
 - PR-AUC: {metrics['pr_auc']:.4f}

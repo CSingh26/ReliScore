@@ -28,3 +28,6 @@ docs/_private/
 
 *.tsbuildinfo
 services/api/openapi.json
+
+**/test-results/
+**/playwright-report/

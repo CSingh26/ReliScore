@@ -1,236 +1,67 @@
 # ReliScore
 
-Storage Telemetry -> Predictive Failure platform built as a monorepo.
+**A drive's telemetry is evidence to investigate—not a promise that it will fail.** ReliScore connects historical storage measurements, careful failure labeling, a reproducible learning pipeline and a fleet triage interface.
 
-## Architecture
+## The engineering question
 
-```text
-┌─────────────────────────────┐
-│ Next.js Dashboard (apps/web)│
-│ - Fleet overview             │
-│ - Drive filters + details    │
-└───────────────┬──────────────┘
-                │ HTTP (REST)
-                ▼
-┌─────────────────────────────┐
-│ Node Platform API           │
-│ services/api (NestJS + TS)  │
-│ - Fleet/drives endpoints    │
-│ - Feature job + scoring job │
-│ - Prisma + Postgres         │
-└───────────────┬──────────────┘
-                │ HTTP (service-to-service)
-                ▼
-┌─────────────────────────────┐
-│ FastAPI Model Service       │
-│ services/model (Python)     │
-│ - /score /score_batch       │
-│ - /model/info /health       │
-│ - Loads versioned artifacts │
-└───────────────┬──────────────┘
-                │
-                ▼
-┌─────────────────────────────┐
-│ Artifacts + Data            │
-│ - services/model/artifacts  │
-│ - Postgres (docker compose) │
-└─────────────────────────────┘
+Can a predictive-maintenance system preserve the meaning of a score from raw SMART readings through training, inference and a dashboard?
+
+That question motivated the most useful work here: keeping online and offline feature windows consistent, excluding unknown future labels, separating temporal evaluation from training, and making unavailable models visible. A dashboard that turns every quiet fleet into an urgent red queue would look busy while destroying the evidence. ReliScore therefore stores the actual model output, even when every drive scores LOW.
+
+## What the system does
+
+- Builds drive histories from Backblaze/public or user-provided telemetry parquet.
+- Constructs 30-day failure targets with censoring and failure-day exclusion; rolling features use the last 7/30 observations.
+- Fits an incremental class-balanced logistic model with a chronological holdout and a 30-day purge.
+- Exports feature order, training fills, evaluation scope, baseline metrics and manifest provenance.
+- Validates finite input, limits each scoring request to 1,000 drives, checks returned drive/day/version, and stores predictions transactionally.
+- Shows fleet flags, individual telemetry and transformed-feature log-odds explanations. Missing artifacts produce explicit unavailable state and HTTP 503, never synthetic production scores.
+
+This remains a computer-science project: data contracts, numerical consistency, temporal reasoning, database boundaries, service orchestration and testable ML matter more than adding unrelated finance features.
+
+## Reading a result
+
+A high model score means the fitted classifier prioritizes that observation under its learned objective. Class-balanced training can distort probability calibration, so a score of 0.8 is **not established evidence of an 80% fleet failure probability**. Similarly, ten HIGH flags are not a prediction of ten failures. Maintenance thresholds need cohort validation, false-positive costs and calibration at the deployment prevalence.
+
+No full Backblaze evaluation or production performance is claimed in this delivery. Automated tests fit explicitly synthetic data to exercise the real pipeline. The [current drive screenshot](docs/media/current/synthetic-drive.png) uses the real application and an explicitly synthetic fitted software fixture. Historical screenshots and AWS material in [docs/media](docs/media) are retained as prior project history, not current deployment proof.
+
+![Real application with explicitly synthetic telemetry and fitted model](docs/media/current/synthetic-drive.png)
+
+## Architecture and rigor
+
+Next.js → NestJS/Prisma/PostgreSQL → FastAPI/scikit-learn. DuckDB handles historical parquet features; versioned artifacts connect training and serving.
+
+[Methodology](docs/METHODOLOGY.md) · [Architecture](docs/ARCHITECTURE.md) · [Model card](docs/MODEL_CARD.md) · [Limitations](docs/LIMITATIONS.md) · [Delivery evidence](docs/PORTFOLIO_DELIVERY.md)
+
+## Run locally
+
+Use Node 22+, the pinned pnpm 9.12.3 and Python 3.12. Copy the relevant `.env.example` files and keep populated environment files untracked.
+
+```sh
+npx pnpm@9.12.3 install --frozen-lockfile
+npx pnpm@9.12.3 --filter @reliscore/shared build
+npx pnpm@9.12.3 --filter @reliscore/api prisma:generate
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements-lock.txt
 ```
 
-## Repository Layout
+Docker Compose starts PostgreSQL (5432), the model (8000), the API (4000) and web (3000): `docker compose up --build`. No trained model or populated database is bundled. Install trusted artifacts under `services/model/artifacts/<version>/` and restart the model to enable scoring. The database starts empty; optional `pnpm prisma:seed` in services/api generates **synthetic telemetry**, not performance evidence. Do not mix that seed with a real fleet database.
 
-```text
-.
-├── apps/web
-├── services/api
-├── services/model
-├── ml/training
-├── infra/local
-├── packages/shared
-├── .github/workflows
-├── .env.example
-├── docker-compose.yml
-├── Makefile
-└── README.md
+To run services directly, apply the schema with `pnpm --filter @reliscore/api exec prisma db push`, run `.venv/bin/uvicorn app.main:app --app-dir services/model`, `pnpm --filter @reliscore/api dev`, and `pnpm --filter @reliscore/web dev`. API/model URLs are configured in the environment examples. These are internal research services; an authenticated deployment perimeter is not implemented.
+
+## Verify
+
+```sh
+npx pnpm@9.12.3 lint
+npx pnpm@9.12.3 typecheck
+npx pnpm@9.12.3 test
+npx pnpm@9.12.3 build
+.venv/bin/pytest services/model/tests -q
+npx pnpm@9.12.3 audit
 ```
 
-## Local Setup
+The Python suite includes a real synthetic parquet-to-fitted-model experiment, censoring and purge checks, exact schema validation, null-fill behavior, explanations and missing-artifact responses. Node tests cover feature parity, score preservation, batch provenance and API behavior. Full latest-commit CI installs locked dependencies, runs checks and builds. See the delivery report for observed counts and CI evidence.
 
-### Prerequisites
-- Node.js 20+
-- pnpm 9+
-- Python 3.11+
-- Docker + Docker Compose
+## Further research
 
-### One-command startup
-
-```bash
-docker compose up --build
-```
-
-This starts:
-- `postgres` on `localhost:5432`
-- `model` on `localhost:8000`
-- `api` on `localhost:4000`
-- `web` on `localhost:3000`
-
-API startup automatically:
-1. Applies Prisma schema (`prisma db push`)
-2. Seeds demo fleet + telemetry
-3. Generates features
-4. Runs one scoring batch
-
-Dashboard is immediately populated with meaningful demo data.
-
-### Make targets
-
-```bash
-make dev        # docker compose up --build
-make up         # detached mode
-make down       # stop + remove volumes
-make stop       # safe stop for reliscore compose + containers
-make logs       # tail logs
-make seed       # rerun seed in API container
-make backblaze-all  # manifest + download + warehouse + H30 features
-make train-h30-all  # full pipeline + streaming train
-make train-smoke    # fast end-to-end smoke run
-make backfill-fleet # load warehouse drives into app DB + run scoring
-make test       # pnpm test + pytest
-```
-
-## Environment Variables
-
-### Root (`.env.example`)
-- `DATABASE_URL`
-- `API_PORT`
-- `MODEL_SERVICE_URL`
-- `MODEL_SERVICE_TOKEN`
-- `RUN_DEMO_SEED`
-- `NEXT_PUBLIC_API_BASE_URL`
-- `API_INTERNAL_URL`
-- `MODEL_ARTIFACTS_ROOT`
-- `MODEL_VERSION`
-
-### Service-specific examples
-- `apps/web/.env.example`
-- `services/api/.env.example`
-- `services/model/.env.example`
-
-## API Docs
-
-- FastAPI docs: `http://localhost:8000/docs`
-- FastAPI ReDoc: `http://localhost:8000/redoc`
-- Node API Swagger UI: `http://localhost:4000/api/docs`
-- Node OpenAPI JSON: generated to `services/api/openapi.json` on startup
-
-## Training a Model
-
-Training code is in `ml/training`.
-
-```bash
-python3 -m pip install -r ml/training/requirements.txt
-make train-smoke
-```
-
-For full all-period Backblaze training:
-
-```bash
-make train-h30-all
-```
-
-### Backfill Dashboard Fleet From Warehouse
-
-After warehouse build, replace demo DB rows with Backblaze drives and run scoring:
-
-```bash
-make backfill-fleet
-```
-
-Optional sizing knobs:
-- `BACKFILL_MAX_DRIVES` (default `5000`)
-- `BACKFILL_LOOKBACK_DAYS` (default `45`)
-- `BACKFILL_MIN_HISTORY_DAYS` (default `14`)
-- `BACKFILL_DATABASE_URL` (default `postgresql://reliscore:reliscore@postgres:5432/reliscore`)
-- `BACKFILL_SCORE_URL` (default `http://api:4000/api/v1/score/run`)
-
-Example:
-
-```bash
-BACKFILL_MAX_DRIVES=10000 BACKFILL_LOOKBACK_DAYS=60 make backfill-fleet
-```
-
-Artifacts are written to:
-
-```text
-services/model/artifacts/<model_version>/
-  ├── model.joblib
-  ├── metrics.json
-  ├── model_card.md
-  ├── version.json
-  └── feature_schema.json
-```
-
-`services/model/artifacts/ACTIVE_MODEL` is updated automatically to the latest trained version.
-
-## Running Scoring Manually
-
-### Trigger from Node API
-
-```bash
-curl -X POST http://localhost:4000/api/v1/score/run \
-  -H "Content-Type: application/json" \
-  -d '{"day":"2026-02-23"}'
-```
-
-### Direct model scoring
-
-Feature keys must exactly match `/model/info` -> `features`.
-
-```bash
-python3 - <<'PY'
-import requests
-
-base = "http://localhost:8000"
-info = requests.get(f"{base}/model/info", timeout=30).json()
-features = {name: 0.0 for name in info["features"]}
-payload = {"drive_id": "DRV-0001", "day": "2026-02-23", "features": features}
-response = requests.post(f"{base}/score", json=payload, timeout=30)
-print(response.status_code)
-print(response.json())
-PY
-```
-
-## Testing
-
-```bash
-# Python model tests
-pytest services/model/tests
-
-# Monorepo JS tests (requires dependencies installed)
-pnpm test
-```
-
-GitHub Actions workflows:
-- `.github/workflows/ci-web.yml`
-- `.github/workflows/ci-api.yml`
-- `.github/workflows/ci-model.yml`
-
-All workflows run lint/test/build only (no deployment steps).
-
-## Screenshots and Demo Video Placeholders
-
-- Fleet Overview Screenshot: `docs/demo-assets/fleet-overview.png`
-- Drives List Screenshot: `docs/demo-assets/drives-list.png`
-- Drive Detail Screenshot: `docs/demo-assets/drive-detail.png`
-- Demo Video Placeholder: `docs/demo-assets/demo-video-link.txt`
-
-## Future Work
-
-- AWS deployment (ECS + RDS + ALB + Vercel) from CI
-- S3-backed artifact store with active-model pointer in DB
-- Drift monitoring:
-  - data drift (feature distribution)
-  - calibration drift
-  - operational drift (score volume, latency, error rates)
-- Alerting + acknowledgment workflows and export APIs
-- Offline backfill jobs for large historical date ranges
+Does a calibrated model outperform a maintenance baseline at an acceptable false-alarm rate? Does performance survive a hardware-model holdout? How do missing SMART attributes and changing drive cohorts affect calibration? These are the next useful questions; this release supplies the engineering foundation to investigate them honestly.
