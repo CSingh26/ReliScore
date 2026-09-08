@@ -1,7 +1,5 @@
 import { FeaturesDaily, Prisma, PrismaClient, TelemetryDaily } from '@prisma/client';
 
-const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-
 const RAW_METRICS = [
   'smart_5_raw',
   'smart_187_raw',
@@ -45,7 +43,7 @@ function stdDev(values: number[]): number {
 }
 
 function recentNumeric(values: Array<number | null | undefined>, window: number): number[] {
-  return values.slice(-window).filter((value): value is number => typeof value === 'number');
+  return values.slice(-window).filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
 }
 
 function toJsonValue(vector: FeatureVector): Prisma.InputJsonValue {
@@ -89,7 +87,7 @@ function metricFeatureSet(sortedRows: TelemetryDaily[], metric: RawMetric): Reco
     [`${metric}_mean_7d`]: mean7,
     [`${metric}_mean_30d`]: mean(values30),
     [`${metric}_std_30d`]: stdDev(values30),
-    [`${metric}_delta_vs_7d`]: (typeof current === 'number' ? current : 0) - mean7,
+    [`${metric}_delta_vs_7d`]: typeof current === 'number' && Number.isFinite(current) ? current - mean7 : 0,
     [`${metric}_is_increasing`]:
       typeof current === 'number' && typeof previous === 'number' && current > previous ? 1 : 0,
   };
@@ -99,9 +97,9 @@ function computeFeatureVector(
   rows: TelemetryDaily[],
   day: Date,
   capacityBytes: bigint | null,
+  firstSeen: Date,
 ): FeatureVector {
   const sortedRows = [...rows].sort((a, b) => a.day.getTime() - b.day.getTime());
-  const firstSeen = sortedRows[0]?.day ?? day;
   const ageDays = Math.max(0, Math.floor((day.getTime() - firstSeen.getTime()) / (24 * 60 * 60 * 1000)));
 
   const vector: FeatureVector = {
@@ -182,44 +180,28 @@ export function featureVectorFromRow(row: FeaturesDaily): FeatureVector {
 
 export async function generateFeaturesForDay(prisma: PrismaClient, day: Date): Promise<number> {
   const dayStart = toDateOnly(day);
-  const lowerBound = new Date(dayStart.getTime() - THIRTY_DAYS_MS);
-
-  const telemetryRows = await prisma.telemetryDaily.findMany({
-    where: {
-      day: {
-        gte: lowerBound,
-        lte: dayStart,
-      },
-    },
-    orderBy: [{ driveId: 'asc' }, { day: 'asc' }],
-  });
-
-  const grouped = new Map<string, TelemetryDaily[]>();
-  for (const row of telemetryRows) {
-    if (!grouped.has(row.driveId)) {
-      grouped.set(row.driveId, []);
-    }
-
-    grouped.get(row.driveId)?.push(row);
-  }
-
-  const driveIds = Array.from(grouped.keys());
+  // Match SQL ROWS windows: last 30 observations, not last 30 calendar days.
+  // A drive without telemetry on the requested day must not acquire a fresh score.
   const drives = await prisma.drive.findMany({
-    where: { driveId: { in: driveIds } },
+    where: { telemetryDaily: { some: { day: dayStart }, none: { day: { lte: dayStart }, isFailedToday: true } } },
     select: {
       driveId: true,
       capacityBytes: true,
+      firstSeen: true,
+      telemetryDaily: { where: { day: { lte: dayStart } }, orderBy: { day: 'desc' }, take: 30 },
     },
   });
-  const capacityByDrive = new Map(drives.map((drive) => [drive.driveId, drive.capacityBytes]));
 
   let generated = 0;
-  for (const [driveId, rows] of grouped.entries()) {
-    if (!rows.length) {
-      continue;
-    }
-
-    const vector = computeFeatureVector(rows, dayStart, capacityByDrive.get(driveId) ?? null);
+  for (const drive of drives) {
+    const driveId = drive.driveId;
+    const rows = drive.telemetryDaily;
+    if (!rows.length || rows[0].day.getTime() !== dayStart.getTime()) continue;
+    const firstSeen = drive.firstSeen ?? (await prisma.telemetryDaily.findFirst({
+      where: { driveId, day: { lte: dayStart } }, orderBy: { day: 'asc' }, select: { day: true },
+    }))?.day;
+    if (!firstSeen) continue;
+    const vector = computeFeatureVector(rows, dayStart, drive.capacityBytes, firstSeen);
     const createInput = toFeaturesDailyCreateInput(driveId, dayStart, vector);
     const updateInput = toFeaturesDailyUpdateInput(vector);
 
