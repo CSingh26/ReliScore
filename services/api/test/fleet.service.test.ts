@@ -9,14 +9,10 @@ describe('FleetService', () => {
       },
       prediction: {
         findFirst: vi.fn().mockResolvedValue({ day: new Date('2026-02-22') }),
-        count: vi
-          .fn()
-          .mockResolvedValueOnce(110)
-          .mockResolvedValueOnce(17),
-        groupBy: vi.fn().mockResolvedValue([
-          { riskBucket: 'LOW', _count: { riskBucket: 71 } },
-          { riskBucket: 'MED', _count: { riskBucket: 22 } },
-          { riskBucket: 'HIGH', _count: { riskBucket: 17 } },
+        findMany: vi.fn().mockResolvedValue([
+          ...Array.from({length:71}, () => ({riskBucket:'LOW'})),
+          ...Array.from({length:22}, () => ({riskBucket:'MED'})),
+          ...Array.from({length:17}, () => ({riskBucket:'HIGH'})),
         ]),
       },
     };

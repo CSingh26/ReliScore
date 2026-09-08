@@ -7,14 +7,12 @@ export class DrivesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async listDrives(params: { risk?: RiskBucket; page: number; pageSize: number }) {
+    const latest = params.risk ? await this.prisma.prediction.findMany({
+      distinct: ['driveId'], orderBy: [{ day: 'desc' }, { scoredAt: 'desc' }, { modelVersion: 'asc' }],
+      select: { driveId: true, riskBucket: true },
+    }) : [];
     const where: Prisma.DriveWhereInput = params.risk
-      ? {
-          predictions: {
-            some: {
-              riskBucket: params.risk,
-            },
-          },
-        }
+      ? { driveId: { in: latest.filter(row => row.riskBucket === params.risk).map(row => row.driveId) } }
       : {};
 
     const [total, rows] = await Promise.all([
@@ -28,9 +26,7 @@ export class DrivesService {
         },
         include: {
           predictions: {
-            orderBy: {
-              day: 'desc',
-            },
+            orderBy: [{ day: 'desc' }, { scoredAt: 'desc' }, { modelVersion: 'asc' }],
             take: 1,
           },
         },
@@ -62,17 +58,20 @@ export class DrivesService {
     const [telemetry, predictions] = await Promise.all([
       this.prisma.telemetryDaily.findMany({
         where: { driveId },
-        orderBy: { day: 'asc' },
+        orderBy: { day: 'desc' },
         take: 60,
       }),
       this.prisma.prediction.findMany({
         where: { driveId },
-        orderBy: { day: 'asc' },
+        orderBy: [{ day: 'desc' }, { scoredAt: 'desc' }, { modelVersion: 'asc' }],
+        distinct: ['day'],
         take: 60,
       }),
     ]);
 
-    const latestPrediction = predictions[predictions.length - 1];
+    const latestPrediction = predictions[0];
+    telemetry.reverse();
+    predictions.reverse();
 
     return {
       drive: {

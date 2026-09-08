@@ -18,5 +18,6 @@ describe('ScoringService score provenance', () => {
     expect(upsert.mock.calls[0][0].create.riskScore).toBe(.012);
     expect(upsert.mock.calls[0][0].create.riskBucket).toBe('LOW');
     expect(result.bucketMode).toBe('model');
+    expect(prisma.featuresDaily.findMany.mock.calls[0][0].where.drive.telemetryDaily.none.isFailedToday).toBe(true);
   });
 });

@@ -44,6 +44,7 @@ export class ScoringService {
     const featureRows = await this.prisma.featuresDaily.findMany({
       where: {
         day: dateOnly,
+        drive: { telemetryDaily: { some: { day: dateOnly }, none: { day: { lte: dateOnly }, isFailedToday: true } } },
       },
       orderBy: {
         driveId: 'asc',

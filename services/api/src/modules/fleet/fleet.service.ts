@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 
 @Injectable()
@@ -10,36 +9,19 @@ export class FleetService {
     const summaryDay = day ? new Date(day) : await this.resolveLatestPredictionDay();
     const totalDrives = await this.prisma.drive.count();
 
-    const predictionsWhere: Prisma.PredictionWhereInput = summaryDay
-      ? { day: summaryDay }
-      : {};
-
-    const [drivesScoredToday, predictedFailures30d, buckets] = await Promise.all([
-      this.prisma.prediction.count({ where: predictionsWhere }),
-      this.prisma.prediction.count({
-        where: {
-          ...predictionsWhere,
-          riskBucket: 'HIGH',
-        },
-      }),
-      this.prisma.prediction.groupBy({
-        by: ['riskBucket'],
-        where: predictionsWhere,
-        _count: {
-          riskBucket: true,
-        },
-      }),
-    ]);
-
-    const riskDistribution = {
-      LOW: 0,
-      MED: 0,
-      HIGH: 0,
-    };
-
-    for (const bucket of buckets) {
-      riskDistribution[bucket.riskBucket] = bucket._count.riskBucket;
-    }
+    // Multiple model versions may coexist; a fleet count is per drive, never
+    // the number of prediction records. Prefer the most recently scored version.
+    const predictions = summaryDay ? await this.prisma.prediction.findMany({
+      where: { day: summaryDay }, distinct: ['driveId'],
+      orderBy: [{ scoredAt: 'desc' }, { modelVersion: 'asc' }],
+      select: { riskBucket: true },
+    }) : [];
+    const riskDistribution = { LOW: 0, MED: 0, HIGH: 0 };
+    for (const prediction of predictions) riskDistribution[prediction.riskBucket] += 1;
+    const drivesScoredToday = predictions.length;
+    // Historical API field name retained; this is a threshold count, not an
+    // expected-failure estimate. The UI calls it High-risk drives.
+    const predictedFailures30d = riskDistribution.HIGH;
 
     return {
       day: summaryDay ? summaryDay.toISOString().slice(0, 10) : null,
