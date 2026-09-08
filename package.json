@@ -5,7 +5,7 @@
   "description": "Storage telemetry predictive failure monorepo",
   "packageManager": "pnpm@9.12.3",
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=22.0.0",
     "pnpm": ">=9.0.0"
   },
   "scripts": {
@@ -19,5 +19,33 @@
   "devDependencies": {
     "prettier": "^3.4.2",
     "typescript": "^5.7.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.23",
+      "qs": "6.16.0",
+      "lodash": "4.18.1",
+      "effect": "3.20.0",
+      "defu": "6.1.5",
+      "deepmerge-ts": "8.0.0",
+      "js-yaml": "4.3.1",
+      "nanoid@3": "3.3.18",
+      "vite": "6.4.3",
+      "esbuild": "0.28.1",
+      "minimatch@3": "3.1.4",
+      "minimatch@9": "10.2.3",
+      "minimatch@10": "10.2.3",
+      "flatted": "3.4.2",
+      "picomatch@2": "2.3.2",
+      "picomatch@4": "4.0.4",
+      "ws": "8.21.0",
+      "form-data": "4.0.6",
+      "postcss-selector-parser@6": "6.1.3",
+      "browserslist": "4.28.7",
+      "@humanfs/node": "0.16.8",
+      "baseline-browser-mapping": "2.11.0",
+      "brace-expansion@1": "1.1.18",
+      "brace-expansion@5": "5.0.9"
+    }
   }
 }
